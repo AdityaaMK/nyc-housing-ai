@@ -22,6 +22,8 @@
   },
   "homepage": "https://github.com/AdityaaMK/nyc-housing-ai#readme",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^17.4.2",
     "puppeteer": "^25.9.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
