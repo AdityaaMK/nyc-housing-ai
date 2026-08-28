@@ -1,0 +1,31 @@
+{
+  "name": "nyc-housing-ai",
+  "version": "1.0.0",
+  "description": "An intelligent, autonomous system built to solve the high-friction, hyper-competitive NYC rental housing search. It monitors listings in real time across StreetEasy, Compass, RentHop, and broker feeds, uses AI to filter out bad deals / red flags, and automates fast outreach to ensure you are first in line for tours.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdityaaMK/nyc-housing-ai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AdityaaMK/nyc-housing-ai/issues"
+  },
+  "homepage": "https://github.com/AdityaaMK/nyc-housing-ai#readme",
+  "dependencies": {
+    "puppeteer": "^25.9.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1"
+  }
+}
