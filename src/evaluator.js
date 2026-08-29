@@ -1,35 +1,14 @@
 require("dotenv").config();
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-const sqlite3 = require("sqlite3");
-const { open } = require("sqlite");
+const { initDB, pool } = require("./db");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 puppeteer.use(StealthPlugin());
 
-async function setupDBColumns(db) {
-    const columns = [
-        "is_evaluated INTEGER DEFAULT 0",
-        "red_flags TEXT",
-        "pros TEXT",
-        "suitability_score INTEGER",
-        "true_gross_rent INTEGER",
-        "is_fee INTEGER",
-        "fee_estimate TEXT"
-    ];
-    for (const col of columns) {
-        try {
-            await db.exec(`ALTER TABLE listings ADD COLUMN ${col}`);
-        } catch(e) {
-            // column already exists
-        }
-    }
-}
-
 async function runAIEvaluation(listing, description) {
     if (!process.env.GEMINI_API_KEY) {
         console.log("   [⚠️ MOCK AI: GEMINI_API_KEY not found in .env]");
-        // Mock evaluation for demonstration
         const mockRedFlags = [];
         if (description.toLowerCase().includes("flex")) mockRedFlags.push("Possible Flex/Railroad layout");
         if (description.toLowerCase().includes("net")) mockRedFlags.push("Net Effective rent mentioned");
@@ -45,7 +24,6 @@ async function runAIEvaluation(listing, description) {
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    // Using gemini-1.5-flash as it is fast and supports JSON schema well
     const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash",
         generationConfig: { responseMimeType: "application/json" }
@@ -80,11 +58,10 @@ async function runAIEvaluation(listing, description) {
 }
 
 async function evaluateListings() {
-    console.log(`[${new Date().toISOString()}] Connecting to database...`);
-    const db = await open({ filename: "./listings.db", driver: sqlite3.Database });
-    await setupDBColumns(db);
-
-    const pending = await db.all(`SELECT * FROM listings WHERE is_evaluated = 0 LIMIT 3`);
+    console.log(`[${new Date().toISOString()}] Connecting to Postgres database...`);
+    
+    const res = await pool.query(`SELECT * FROM listings WHERE is_evaluated = false LIMIT 3`);
+    const pending = res.rows;
     
     if (pending.length === 0) {
         console.log("No pending listings to evaluate.");
@@ -101,21 +78,17 @@ async function evaluateListings() {
             console.log(`\n🔍 Fetching details for: ${listing.title} (${listing.url})`);
             await page.goto(listing.url, { waitUntil: "domcontentloaded", timeout: 30000 });
             
-            // Extract the description paragraphs
-            const description = await page.$$eval(".Description-block, .building-description, p, [data-test=\description-text]", els => els.map(e => e.innerText).join("\n"));
-
+            const description = await page.$$eval(".Description-block, .building-description, p, [data-test='description-text']", els => els.map(e => e.innerText).join("\n"));
             console.log(`   Extracted description (${description.length} chars)`);
 
-            // Evaluate with AI
             console.log(`   🧠 Sending to AI Evaluator...`);
             const evaluation = await runAIEvaluation(listing, description);
             
-            // Update DB
-            await db.run(
-                `UPDATE listings SET is_evaluated = 1, true_gross_rent = ?, is_fee = ?, fee_estimate = ?, red_flags = ?, pros = ?, suitability_score = ? WHERE id = ?`,
+            await pool.query(
+                `UPDATE listings SET is_evaluated = true, true_gross_rent = $1, is_fee = $2, fee_estimate = $3, red_flags = $4, pros = $5, suitability_score = $6 WHERE id = $7`,
                 [
                     evaluation.true_gross_rent, 
-                    evaluation.is_fee ? 1 : 0, 
+                    evaluation.is_fee, 
                     evaluation.fee_estimate,
                     JSON.stringify(evaluation.red_flags), 
                     JSON.stringify(evaluation.pros),
@@ -129,7 +102,6 @@ async function evaluateListings() {
                 console.log(`   🚨 Red Flags: ${evaluation.red_flags.join(", ")}`);
             }
             
-            // Wait slightly between requests
             await new Promise(r => setTimeout(r, 2000));
         }
     } finally {
@@ -138,7 +110,7 @@ async function evaluateListings() {
 }
 
 if (require.main === module) {
-    evaluateListings().catch(console.error);
+    initDB().then(evaluateListings).catch(console.error);
 }
 
 module.exports = { evaluateListings };

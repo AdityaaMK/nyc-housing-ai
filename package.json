@@ -7,7 +7,10 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "api": "node src/server.js",
+    "web": "cd web && npm run dev",
+    "dashboard": "concurrently \"npm run api\" \"npm run web\""
   },
   "repository": {
     "type": "git",
@@ -23,8 +26,12 @@
   "homepage": "https://github.com/AdityaaMK/nyc-housing-ai#readme",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "concurrently": "^10.0.5",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "node-telegram-bot-api": "^2.1.0",
+    "pg": "^8.23.0",
     "puppeteer": "^25.9.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

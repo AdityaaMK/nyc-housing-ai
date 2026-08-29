@@ -1,4 +1,5 @@
-const { scrapeStreetEasy, setupDB } = require('./scraper');
+const { initDB, pool } = require('./db');
+const { scrapeStreetEasy } = require('./scraper');
 const { evaluateListings } = require('./evaluator');
 const { notifyHighScoringListings } = require('./notifier');
 
@@ -8,10 +9,8 @@ async function runCycle() {
     console.log(`======================================================\n`);
     
     try {
-        const db = await setupDB();
-        
         console.log("▶️ STEP 1: SCRAPING STREETEASY (STEALTH MODE)");
-        await scrapeStreetEasy(db);
+        await scrapeStreetEasy();
         
         console.log("\n▶️ STEP 2: RUNNING AI EVALUATOR");
         await evaluateListings();
@@ -28,14 +27,17 @@ async function runCycle() {
 }
 
 if (require.main === module) {
-    runCycle().then(() => {
-        if (process.env.DAEMON_MODE === 'true') {
-            console.log("💤 Sleeping for 60 seconds before next cycle...");
-            setInterval(runCycle, 60000);
-        } else {
-            console.log("Process exited (Single-run mode). To run continuously, set DAEMON_MODE=true");
-            process.exit(0);
-        }
+    initDB().then(() => {
+        runCycle().then(() => {
+            if (process.env.DAEMON_MODE === 'true') {
+                console.log("💤 Sleeping for 60 seconds before next cycle...");
+                setInterval(runCycle, 60000);
+            } else {
+                console.log("Process exited (Single-run mode).");
+                pool.end();
+                process.exit(0);
+            }
+        });
     });
 }
 

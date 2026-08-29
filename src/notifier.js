@@ -1,7 +1,6 @@
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
-const sqlite3 = require("sqlite3");
-const { open } = require("sqlite");
+const { initDB, pool } = require("./db");
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -11,17 +10,9 @@ if (token) {
     bot = new TelegramBot(token, {polling: false});
 }
 
-async function setupDBColumns(db) {
-    try { 
-        await db.exec(`ALTER TABLE listings ADD COLUMN is_notified INTEGER DEFAULT 0`); 
-    } catch(e) {}
-}
-
 async function notifyHighScoringListings() {
-    const db = await open({ filename: "./listings.db", driver: sqlite3.Database });
-    await setupDBColumns(db);
-
-    const pending = await db.all(`SELECT * FROM listings WHERE is_evaluated = 1 AND is_notified = 0`);
+    const res = await pool.query(`SELECT * FROM listings WHERE is_evaluated = true AND is_notified = false`);
+    const pending = res.rows;
     
     if (pending.length === 0) {
         console.log("No new evaluated listings to notify.");
@@ -63,10 +54,7 @@ async function notifyHighScoringListings() {
 
         if (bot && chatId) {
             try {
-                await bot.sendMessage(chatId, message, {
-                    parse_mode: "HTML",
-                    reply_markup: keyboard
-                });
+                await bot.sendMessage(chatId, message, { parse_mode: "HTML", reply_markup: keyboard });
                 console.log(`📱 Sent Telegram alert for: ${title}`);
             } catch (e) {
                 console.error(`Failed to send Telegram message:`, e.message);
@@ -77,11 +65,11 @@ async function notifyHighScoringListings() {
             console.log(`[Buttons: View Listing | ✉️ Send Intro Packet | ❌ Pass]`);
         }
 
-        await db.run(`UPDATE listings SET is_notified = 1 WHERE id = ?`, [listing.id]);
+        await pool.query(`UPDATE listings SET is_notified = true WHERE id = $1`, [listing.id]);
     }
 }
 
 if (require.main === module) {
-    notifyHighScoringListings().catch(console.error);
+    initDB().then(notifyHighScoringListings).catch(console.error);
 }
 module.exports = { notifyHighScoringListings };

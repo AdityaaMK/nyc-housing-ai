@@ -1,30 +1,10 @@
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-const sqlite3 = require("sqlite3");
-const { open } = require("sqlite");
+const { initDB, pool } = require("./db");
 
 puppeteer.use(StealthPlugin());
 
-async function setupDB() {
-    const db = await open({
-        filename: "./listings.db",
-        driver: sqlite3.Database
-    });
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS listings (
-            id TEXT PRIMARY KEY,
-            url TEXT,
-            title TEXT,
-            price TEXT,
-            bedrooms REAL,
-            bathrooms REAL,
-            discovered_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-    return db;
-}
-
-async function scrapeStreetEasy(db) {
+async function scrapeStreetEasy() {
     console.log(`[${new Date().toISOString()}] Launching browser for scrape cycle...`);
     const browser = await puppeteer.launch({ 
         headless: "new",
@@ -56,11 +36,11 @@ async function scrapeStreetEasy(db) {
                             const bedrooms = item.numberOfBedrooms || 0;
                             const bathrooms = item.numberOfBathroomsTotal || 0;
                             
-                            const exists = await db.get(`SELECT id FROM listings WHERE id = ?`, [id]);
+                            const res = await pool.query(`SELECT id FROM listings WHERE id = $1`, [id]);
                             
-                            if (!exists) {
-                                await db.run(
-                                    `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms) VALUES (?, ?, ?, ?, ?, ?)`,
+                            if (res.rows.length === 0) {
+                                await pool.query(
+                                    `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms) VALUES ($1, $2, $3, $4, $5, $6)`,
                                     [id, url, title, item.price || null, bedrooms, bathrooms]
                                 );
                                 console.log(`🎉 NEW LISTING FOUND: ${title} | Bed: ${bedrooms} | Bath: ${bathrooms} | URL: ${url}`);
@@ -68,8 +48,7 @@ async function scrapeStreetEasy(db) {
                             }
                         }
                     }
-                } catch (e) {
-                }
+                } catch (e) {}
             }
         }
         console.log(`[${new Date().toISOString()}] Cycle complete. Found ${newListingsCount} new listings.`);
@@ -81,13 +60,12 @@ async function scrapeStreetEasy(db) {
 }
 
 async function run() {
-    console.log("Starting StreetEasy Real-Time Monitor...");
-    const db = await setupDB();
-    await scrapeStreetEasy(db);
+    await initDB();
+    await scrapeStreetEasy();
 }
 
 if (require.main === module) {
     run().catch(console.error);
 }
 
-module.exports = { run, scrapeStreetEasy, setupDB };
+module.exports = { run, scrapeStreetEasy };
