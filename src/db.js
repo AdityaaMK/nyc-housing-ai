@@ -9,6 +9,11 @@ const pool = new Pool({
         : { rejectUnauthorized: false }
 });
 
+// Prevent Node process from crashing if a background idle connection drops (common with free-tier cloud DBs)
+pool.on('error', (err) => {
+    console.error('Unexpected background database error:', err.message);
+});
+
 async function initDB() {
     if (!process.env.DATABASE_URL) {
         console.warn("⚠️ DATABASE_URL is not set in .env! Database connection will fail.");
