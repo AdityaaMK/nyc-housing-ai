@@ -10,7 +10,11 @@
     "start": "node src/index.js",
     "api": "node src/server.js",
     "web": "cd web && npm run dev",
-    "dashboard": "concurrently \"npm run api\" \"npm run web\""
+    "dashboard": "concurrently \"npm run api\" \"npm run web\"",
+    "daemon": "pm2 start ecosystem.config.js",
+    "daemon:stop": "pm2 stop housing-daemon",
+    "daemon:logs": "pm2 logs housing-daemon",
+    "daemon:status": "pm2 status"
   },
   "repository": {
     "type": "git",
@@ -30,8 +34,11 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "imap-simple": "^5.1.0",
     "node-telegram-bot-api": "^2.1.0",
+    "nodemailer": "^10.0.9",
     "pg": "^8.23.0",
+    "pm2": "^7.0.4",
     "puppeteer": "^25.9.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
