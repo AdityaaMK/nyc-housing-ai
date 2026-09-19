@@ -28,7 +28,13 @@
 - [x] 1-Click Google Calendar URL generator
 - [x] 1-Tap tour confirmation back to broker via Telegram
 
-### Phase 5: Future Enhancements
-- [ ] Compass-exclusive direct listing feed
-- [ ] Web dashboard calendar & building health badges (`web/`)
+### Phase 5: Compass & Web Dashboard Upgrades
+- [x] Compass direct listing feed with AWS WAF stealth bypass (`src/compass.js`)
+- [x] Web dashboard upgrade (`web/src/App.jsx`) with Kanban, Tours & Calendar, and Commute Map Guide
+- [x] Web API expansion (`src/server.js`) with `/api/tours` and `/api/stats`
+- [x] PM2 dual-process supervision (`housing-daemon` + `housing-api`)
+
+### Phase 6: Future Enhancements
+- [ ] Automated 24-hour broker follow-up ("Nudge Engine")
+- [ ] Weekend Open House walking route optimizer
 - [ ] SMS fallback notification option via Twilio

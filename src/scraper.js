@@ -3,6 +3,7 @@ const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const { initDB, pool } = require("./db");
 const { normalizeAddress, checkOrRecordDuplicate } = require("./normalizer");
 const { scrapeRentHop } = require("./renthop");
+const { scrapeCompass } = require("./compass");
 
 puppeteer.use(StealthPlugin());
 
@@ -106,7 +107,10 @@ async function scrapeAllSources() {
         // 2. RentHop Ingestion
         const rhNew = await scrapeRentHop(browser);
         
-        console.log(`[${new Date().toISOString()}] Multi-source cycle complete: StreetEasy (+${seNew}), RentHop (+${rhNew}).`);
+        // 3. Compass Ingestion
+        const compNew = await scrapeCompass(browser);
+        
+        console.log(`[${new Date().toISOString()}] Multi-source cycle complete: StreetEasy (+${seNew}), RentHop (+${rhNew}), Compass (+${compNew}).`);
     } catch (err) {
         console.error("Error during multi-source scrape cycle:", err.message);
     } finally {

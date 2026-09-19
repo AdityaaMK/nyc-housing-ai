@@ -11,6 +11,17 @@ module.exports = {
       max_memory_restart: '500M',
       restart_delay: 5000,
       autorestart: true
+    },
+    {
+      name: 'housing-api',
+      script: 'src/server.js',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3001
+      },
+      max_memory_restart: '300M',
+      restart_delay: 3000,
+      autorestart: true
     }
   ]
 };
