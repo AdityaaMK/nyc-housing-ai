@@ -74,6 +74,14 @@ function initSQLite() {
                         if (!hasCommuteSum) sqliteDb.run(`ALTER TABLE listings ADD COLUMN commute_summary TEXT`);
                         const hasHealth = columns.some(col => col.name === 'building_health');
                         if (!hasHealth) sqliteDb.run(`ALTER TABLE listings ADD COLUMN building_health TEXT`);
+                        const hasAppliedAt = columns.some(col => col.name === 'applied_at');
+                        if (!hasAppliedAt) sqliteDb.run(`ALTER TABLE listings ADD COLUMN applied_at TIMESTAMP`);
+                        const hasNudgeNotified = columns.some(col => col.name === 'nudge_notified');
+                        if (!hasNudgeNotified) sqliteDb.run(`ALTER TABLE listings ADD COLUMN nudge_notified INTEGER DEFAULT 0`);
+                        const hasNudgedAt = columns.some(col => col.name === 'nudged_at');
+                        if (!hasNudgedAt) sqliteDb.run(`ALTER TABLE listings ADD COLUMN nudged_at TIMESTAMP`);
+                        const hasNudgeCount = columns.some(col => col.name === 'nudge_count');
+                        if (!hasNudgeCount) sqliteDb.run(`ALTER TABLE listings ADD COLUMN nudge_count INTEGER DEFAULT 0`);
                     }
                     resolve();
                 });
@@ -121,6 +129,10 @@ async function initDB() {
                     ALTER TABLE listings ADD COLUMN IF NOT EXISTS commute_summary TEXT;
                     ALTER TABLE listings ADD COLUMN IF NOT EXISTS broker_email TEXT;
                     ALTER TABLE listings ADD COLUMN IF NOT EXISTS building_health TEXT;
+                    ALTER TABLE listings ADD COLUMN IF NOT EXISTS applied_at TIMESTAMP;
+                    ALTER TABLE listings ADD COLUMN IF NOT EXISTS nudge_notified BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE listings ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMP;
+                    ALTER TABLE listings ADD COLUMN IF NOT EXISTS nudge_count INTEGER DEFAULT 0;
                 `);
                 activeEngine = 'pg';
                 return pool;

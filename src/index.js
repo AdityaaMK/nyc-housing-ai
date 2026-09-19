@@ -4,6 +4,7 @@ const { evaluateListings } = require('./evaluator');
 const { notifyHighScoringListings } = require('./notifier');
 const { startBot } = require('./bot');
 const { checkInboundReplies } = require('./inbound_listener');
+const { checkPendingNudges } = require('./nudge_engine');
 
 let isRunning = false;
 let shouldStop = false;
@@ -28,6 +29,9 @@ async function runCycle() {
         
         console.log("\n▶️ STEP 4: CHECKING INBOUND BROKER REPLIES & TOURS");
         await checkInboundReplies(botInstance?.api || botInstance, process.env.TELEGRAM_CHAT_ID);
+
+        console.log("\n▶️ STEP 5: SCANNING FOR UNANSWERED INQUIRIES & NUDGES");
+        await checkPendingNudges(botInstance?.api || botInstance, process.env.TELEGRAM_CHAT_ID);
 
         console.log(`\n======================================================`);
         console.log(`✅ CYCLE COMPLETE.`);

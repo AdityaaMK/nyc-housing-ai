@@ -34,7 +34,8 @@
 - [x] Web API expansion (`src/server.js`) with `/api/tours` and `/api/stats`
 - [x] PM2 dual-process supervision (`housing-daemon` + `housing-api`)
 
-### Phase 6: Future Enhancements
-- [ ] Automated 24-hour broker follow-up ("Nudge Engine")
+### Phase 6: Nudge Engine & Smart Outreach
+- [x] Automated 24-hour broker follow-up ("Nudge Engine") with Telegram 1-tap dispatch (`src/nudge_engine.js`)
 - [ ] Weekend Open House walking route optimizer
+- [ ] Official NYC Rent-Stabilization Detector (DHCR database lookups)
 - [ ] SMS fallback notification option via Twilio

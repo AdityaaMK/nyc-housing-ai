@@ -4,6 +4,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { pool, initDB } = require("./db");
 const { submitInquiry } = require("./auto_inquire");
 const { confirmTourBooking } = require("./inbound_listener");
+const { sendNudge, skipNudge } = require("./nudge_engine");
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 let bot = null;
@@ -135,7 +136,7 @@ function setupBotHandlers(botInstance) {
                 }
 
                 await pool.query(
-                    `UPDATE listings SET status = 'applied' WHERE id = $1 OR id_hash = $1 OR md5(id) = $1`,
+                    `UPDATE listings SET status = 'applied', applied_at = CURRENT_TIMESTAMP WHERE id = $1 OR id_hash = $1 OR md5(id) = $1`,
                     [actionId]
                 );
 
@@ -144,6 +145,13 @@ function setupBotHandlers(botInstance) {
                 // Attempt automated headless submission
                 console.log(`🤖 Attempting auto-inquiry for: ${listing.title}`);
                 const autoResult = await submitInquiry(listing, introPacket);
+
+                if (autoResult && autoResult.recipient) {
+                    await pool.query(
+                        `UPDATE listings SET broker_email = $1 WHERE id = $2 OR id_hash = $2 OR md5(id) = $2`,
+                        [autoResult.recipient, actionId]
+                    );
+                }
 
                 let statusBadge = "";
                 if (autoResult.success) {
@@ -189,6 +197,34 @@ function setupBotHandlers(botInstance) {
             } catch (err) {
                 console.error("Error confirming tour:", err.message);
                 await ctx.answerCallbackQuery({ text: "Error confirming tour." });
+            }
+        } else if (callbackData.startsWith("nudge_")) {
+            const actionId = callbackData.replace("nudge_", "");
+            try {
+                await ctx.answerCallbackQuery({ text: "📨 Sending follow-up nudge to broker..." });
+                const res = await sendNudge(actionId);
+                if (res.success) {
+                    await ctx.reply(
+                        `✅ <b>FOLLOW-UP NUDGE SENT!</b>\n\n` +
+                        `Dispatched polite follow-up email to broker <code>${escapeHtml(res.recipient)}</code> for <b>${escapeHtml(res.listing.title)}</b>.\n\n` +
+                        `<i>A copy has been delivered to your Gmail inbox.</i>`,
+                        { parse_mode: "HTML" }
+                    );
+                } else {
+                    await ctx.reply(`⚠️ Could not send nudge: ${escapeHtml(res.reason)}`, { parse_mode: "HTML" });
+                }
+            } catch (err) {
+                console.error("Error sending nudge:", err.message);
+                await ctx.answerCallbackQuery({ text: "Error sending nudge." });
+            }
+        } else if (callbackData.startsWith("skip_nudge_")) {
+            const actionId = callbackData.replace("skip_nudge_", "");
+            try {
+                await skipNudge(actionId);
+                await ctx.answerCallbackQuery({ text: "❌ Nudge dismissed." });
+                await ctx.reply("❌ <i>Follow-up nudge dismissed for this listing.</i>", { parse_mode: "HTML" });
+            } catch (err) {
+                await ctx.answerCallbackQuery({ text: "Error dismissing nudge." });
             }
         }
     });
