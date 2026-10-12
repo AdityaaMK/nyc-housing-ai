@@ -10,9 +10,10 @@ const columns = {
     is_evaluated: 'BOOLEAN DEFAULT FALSE', red_flags: 'TEXT', pros: 'TEXT',
     suitability_score: 'INTEGER', true_gross_rent: 'INTEGER', is_fee: 'BOOLEAN DEFAULT FALSE',
     fee_estimate: 'TEXT', is_notified: 'BOOLEAN DEFAULT FALSE', status: "TEXT DEFAULT 'inbox'",
-    neighborhood: 'TEXT', is_preferred: 'BOOLEAN DEFAULT FALSE', source: "TEXT DEFAULT 'streeteasy'",
+    location_area: 'TEXT', neighborhood: 'TEXT', is_preferred: 'BOOLEAN DEFAULT FALSE', source: "TEXT DEFAULT 'streeteasy'",
     normalized_address: 'TEXT', cross_posted_sources: 'TEXT', id_hash: 'TEXT',
     commute_minutes: 'INTEGER', commute_summary: 'TEXT', broker_email: 'TEXT', building_health: 'TEXT',
+    manhattan_commute_minutes: 'REAL', manhattan_arrival_station: 'TEXT', manhattan_commute_summary: 'TEXT',
     applied_at: 'TIMESTAMP', nudge_notified: 'BOOLEAN DEFAULT FALSE', nudged_at: 'TIMESTAMP',
     nudge_count: 'INTEGER DEFAULT 0'
 };

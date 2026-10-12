@@ -6,6 +6,8 @@ const crypto = require("crypto");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { checkBuildingHealth } = require("./building_health");
 
+const { preferenceSummary, locationArea, enforceLocation } = require('./preferences');
+
 puppeteer.use(StealthPlugin());
 
 async function runAIEvaluation(listing, description) {
@@ -33,28 +35,32 @@ async function runAIEvaluation(listing, description) {
     ${description}
     
     RENTER PREFERENCES & CRITERIA:
-    - Budget / Layout: 2B2B between $1,800 and $5,000 OR 1B/Studio between $1,800 and $2,700 (Manhattan only). Minimum rent is $1,800.
-    - PREFERRED NEIGHBORHOODS: Lower East Side (LES), Financial District (FiDi), East Village, Hell's Kitchen.
+    - Budget / Layout: 2B2B between $1,800 and $5,000 OR 1B/Studio between $1,800 and $2,700 (within the saved search areas below). Minimum rent is $1,800.
+    - SAVED SEARCH AREAS: ${preferenceSummary()}.
     - WORKPLACE / COMMUTE TARGET: ${targetOffice} (Located at 8th Ave & 40th/41st St, direct access to Times Sq-42 St / Port Authority A/C/E/1/2/3/7/N/Q/R/W).
     
     Analyze the listing and output a JSON object with the following exact keys:
-    - "neighborhood": (string) NYC neighborhood (e.g., "Lower East Side", "East Village", "Financial District", "Hell's Kitchen", "Harlem", "Upper West Side", "Chelsea", etc.).
-    - "is_preferred_neighborhood": (boolean) true if the listing is in LES, FiDi, East Village, or Hell's Kitchen.
+    - "location_area": (string) actual borough or municipality: Manhattan, Brooklyn, Queens, Jersey City, Hoboken, Bronx, Staten Island, or Unknown. Verify from the property location, not nearby places mentioned in the description.
+    - "neighborhood": (string) NYC/NJ neighborhood (e.g., "Lower East Side", "East Village", "Financial District", "Hell's Kitchen", "Harlem", "Upper West Side", "Chelsea", etc.).
+    - "is_preferred_neighborhood": (boolean) true only if the property matches the saved search areas above.
     - "commute_minutes": (number) estimated door-to-door morning commute time in minutes to ${targetOffice} (including walking to nearest subway + train ride + walk to 620 8th Ave).
     - "commute_summary": (string) concise door-to-door transit route, e.g. "18 mins: 4 min walk to A/C/E @ 14th St -> 8 min ride to 42 St-Port Authority (direct exit into 620 8th Ave)".
+    - "manhattan_commute_minutes": (number or null) SEPARATE estimate from this apartment to the first arrival station in Manhattan by public transit on a typical weekday morning. Include walking to the origin station, typical waiting, in-vehicle time, and transfers. Do not use only train time, the office commute, or a neighborhood-wide best case. Use null if the property location or route cannot be reasonably established, or the apartment is already in Manhattan.
+    - "manhattan_arrival_station": (string or null) name of that arrival station, which must be in Manhattan. Null if unknown/not applicable.
+    - "manhattan_commute_summary": (string or null) describe the walk, transit line, waits/transfers, and Manhattan arrival station supporting the separate estimate. These are estimates, not verified live routing. Null if unknown/not applicable.
     - "true_gross_rent": (number) calculate actual monthly rent. If net effective / concessions mentioned, compute actual monthly gross check. If not, use advertised price.
     - "is_fee": (boolean) true if broker fee mentioned, tenant pays fee, or 15%. False if explicitly no fee.
     - "fee_estimate": (string) e.g., "15% of annual", "1 month rent", or "None".
     - "red_flags": (array of strings) negative aspects: walk-up above 3rd floor, basement, railroad layout, windowless rooms, net-effective rent tricks, fake amenities, exorbitant fees, or >40 min commute.
     - "pros": (array of strings) positive aspects: ultra-fast commute (<25 min to office), in-unit laundry, dishwasher, private balcony, elevator, doorman, near subway, no fee.
     - "suitability_score": (number 0-100) scoring guide:
-        * Preferred neighborhood baseline: In LES, FiDi, East Village, or Hell's Kitchen = strong baseline (75-90) if layout & price are good.
+        * Preferred neighborhood baseline: Within the saved search areas above = strong baseline (75-90) if layout & price are good.
         * Commute adjustments to 620 8th Ave:
             <= 20 min: +10 to +15 pts bonus (elite commute to Datadog office).
             21-30 min: +5 to +10 pts bonus.
             31-40 min: neutral.
             > 40 min: -15 pts penalty.
-        * Score < 75 if outside preferred neighborhoods, or if major red flags exist (walk-up > 3rd floor, broker fee on already expensive unit, deceptive gross rent, railroad layout).
+        * Score < 75 if outside the saved search areas, or if major red flags exist (walk-up > 3rd floor, broker fee on already expensive unit, deceptive gross rent, railroad layout).
     `;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -138,7 +144,7 @@ async function evaluateListings() {
             }
 
             // Check Building Health via NYC Open Data (HPD & 311)
-            const health = await checkBuildingHealth(listing.title);
+            const health = await checkBuildingHealth(listing.title, locationArea(evaluation));
             if (health) {
                 if (health.isHazardous) {
                     evaluation.suitability_score = Math.max(0, evaluation.suitability_score - 20);
@@ -152,10 +158,13 @@ async function evaluateListings() {
                 }
             }
 
+            // Apply the location rule after all score bonuses.
+            enforceLocation(evaluation);
+
             const idHash = crypto.createHash("md5").update(listing.id).digest("hex");
 
             await pool.query(
-                `UPDATE listings SET price = $1, is_evaluated = true, true_gross_rent = $2, is_fee = $3, fee_estimate = $4, red_flags = $5, pros = $6, suitability_score = $7, neighborhood = $8, is_preferred = $9, id_hash = $10, commute_minutes = $11, commute_summary = $12, building_health = $13 WHERE id = $14`,
+                `UPDATE listings SET price = $1, is_evaluated = true, true_gross_rent = $2, is_fee = $3, fee_estimate = $4, red_flags = $5, pros = $6, suitability_score = $7, neighborhood = $8, is_preferred = $9, id_hash = $10, commute_minutes = $11, commute_summary = $12, building_health = $13, location_area = $14, manhattan_commute_minutes = $15, manhattan_arrival_station = $16, manhattan_commute_summary = $17 WHERE id = $18`,
                 [
                     listing.price,
                     evaluation.true_gross_rent || listing.price || 0, 
@@ -170,6 +179,10 @@ async function evaluateListings() {
                     evaluation.commute_minutes || null,
                     evaluation.commute_summary || null,
                     JSON.stringify(health || {}),
+                    evaluation.location_area,
+                    evaluation.manhattan_commute_minutes,
+                    evaluation.manhattan_arrival_station,
+                    evaluation.manhattan_commute_summary,
                     listing.id
                 ]
             );

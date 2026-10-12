@@ -35,7 +35,15 @@ function App() {
   const [tours, setTours] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [filterNeighborhood, setFilterNeighborhood] = useState('all');
+  const [preferences, setPreferences] = useState(null);
+  const [filterNeighborhood, setFilterNeighborhood] = useState(() => {
+    try { return localStorage.getItem('housing-neighborhood-filter') || 'preferred'; }
+    catch { return 'preferred'; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('housing-neighborhood-filter', filterNeighborhood); } catch { /* Storage can be disabled. */ }
+  }, [filterNeighborhood]);
 
   useEffect(() => {
     fetchAllData();
@@ -44,14 +52,16 @@ function App() {
   async function fetchAllData() {
     try {
       setError('');
-      const [listRes, tourRes, statRes] = await Promise.all([
+      const [listRes, tourRes, statRes, prefRes] = await Promise.all([
         requestApi('/api/listings'),
         requestApi('/api/tours'),
-        requestApi('/api/stats')
+        requestApi('/api/stats'),
+        requestApi('/api/preferences')
       ]);
       setListings(Array.isArray(listRes) ? listRes : []);
       setTours(Array.isArray(tourRes) ? tourRes : []);
       setStats(statRes);
+      setPreferences(prefRes);
       setLoading(false);
     } catch (err) {
       console.error(err);
@@ -99,7 +109,9 @@ function App() {
 
   const filteredListings = filterNeighborhood === 'all'
     ? listings
-    : listings.filter(l => (l.neighborhood || '').toLowerCase().includes(filterNeighborhood.toLowerCase()));
+    : filterNeighborhood === 'preferred'
+      ? listings.filter(l => l.is_preferred === true || l.is_preferred === 1)
+      : listings.filter(l => (l.is_preferred === true || l.is_preferred === 1) && ((l.neighborhood || '').toLowerCase().includes(filterNeighborhood.toLowerCase()) || l.location_area === filterNeighborhood));
 
   const inbox = filteredListings.filter(l => l.status === 'inbox');
   const applied = filteredListings.filter(l => l.status === 'applied');
@@ -205,14 +217,14 @@ function App() {
                 onChange={e => setFilterNeighborhood(e.target.value)}
                 className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="all">All Neighborhoods ({listings.length})</option>
-                <option value="Hell's Kitchen">Hell's Kitchen (⭐ Office Proximity)</option>
-                <option value="West Village">West Village</option>
-                <option value="East Village">East Village (⭐ Preferred)</option>
-                <option value="Chelsea">Chelsea</option>
-                <option value="Lower East Side">Lower East Side (⭐ Preferred)</option>
-                <option value="Financial District">Financial District (⭐ Preferred)</option>
-                <option value="Upper West Side">Upper West Side</option>
+                <option value="preferred">Saved search areas</option>
+                <option value="all">All collected listings ({listings.length})</option>
+                {preferences?.preferredNeighborhoods?.map(n => (
+                  <option key={n.name} value={n.name}>{n.name} (⭐ Preferred)</option>
+                ))}
+                {preferences?.includedAreas?.map(area => (
+                  <option key={area} value={area}>{area} (≤{preferences.includedAreaCommute.maxMinutes}m to Manhattan)</option>
+                ))}
               </select>
             </div>
           )}
@@ -391,6 +403,12 @@ function ListingCard({ l, onPass, onApply }) {
           <Bath className="w-3.5 h-3.5 text-slate-400" /> {l.bathrooms} Bath
         </div>
       </div>
+
+      {l.manhattan_commute_summary && (
+        <div className="mb-2.5 p-2 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs font-medium text-indigo-900">
+          <b>AI estimate to Manhattan · {l.manhattan_commute_minutes}m to {l.manhattan_arrival_station}:</b> {l.manhattan_commute_summary}
+        </div>
+      )}
 
       {/* COMMUTE ROUTE TO DATADOG */}
       {l.commute_summary && (

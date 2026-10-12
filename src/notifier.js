@@ -3,6 +3,8 @@ const crypto = require("crypto");
 const { Api } = require("node-telegram-bot-api");
 const { initDB, pool } = require("./db");
 
+const { loadPreferences, matchesLocation } = require('./preferences');
+
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
 
@@ -12,6 +14,7 @@ if (token) {
 }
 
 async function notifyHighScoringListings() {
+    const preferences = loadPreferences();
     const res = await pool.query(`SELECT * FROM listings WHERE is_evaluated = true AND is_notified = false`);
     const pending = res.rows;
     
@@ -24,6 +27,12 @@ async function notifyHighScoringListings() {
 
     for (const listing of pending) {
         const score = listing.suitability_score || 0;
+        // Never let score bonuses or a stale model-generated flag override saved locations.
+        listing.is_preferred = matchesLocation(listing, preferences);
+        if (!listing.is_preferred) {
+            console.log(`   Skipping alert outside saved locations: ${listing.title}`);
+            continue;
+        }
         
         // Only buzz phone if score is above 75 AND price is at least $1,800!
         if (score < 75 || !listing.price || listing.price < 1800) {
@@ -59,6 +68,9 @@ async function notifyHighScoringListings() {
             ? `\n🚇 <b>Commute to 620 8th Ave:</b> ${esc(listing.commute_summary)}`
             : (listing.commute_minutes ? `\n🚇 <b>Commute to 620 8th Ave:</b> ~${listing.commute_minutes} mins` : "");
 
+        const manhattanCommute = listing.manhattan_commute_summary
+            ? '\n🚉 <b>AI estimate to Manhattan:</b> ' + listing.manhattan_commute_minutes + ' min to ' + esc(listing.manhattan_arrival_station) + ' — ' + esc(listing.manhattan_commute_summary) : '';
+
         let buildingHealthBadge = "";
         try {
             if (listing.building_health) {
@@ -76,6 +88,7 @@ async function notifyHighScoringListings() {
                         `${neighborhoodTag}` +
                         `${sourceBadge}` +
                         `${commuteInfo}` +
+                        manhattanCommute +
                         `${buildingHealthBadge}\n` +
                         `⚠️ <b>Broker Fee:</b> ${feeText}\n\n` +
                         `🚩 <b>Red Flags:</b> ${esc(redFlags || "None")}\n` +

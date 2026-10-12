@@ -48,3 +48,29 @@ Configure `.env` with `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 The dashboard uses `http://localhost:3001` by default; set `VITE_API_URL` at build time for another API origin. The daemon (`npm start` or `npm run daemon`) performs live external operations and requires the configured services.
 
 Unknown building health is displayed as unverified. Failed AI evaluations remain pending, failed notifications remain eligible for retry, and tours without a precise date/time do not receive an invented calendar time. Historical tours need a `proposed_datetime` value before a calendar link can be offered. Conservative apartment deduplication requires a house number and unit; listings with incomplete addresses may appear separately.
+
+## Saved search locations
+
+`src/search_preferences.json` is the durable source of truth for location preferences, loaded each cycle/request and included in Docker images with `src/`. Preferred Manhattan neighborhoods: Lower East Side, Financial District, East Village, and Hell's Kitchen. Williamsburg is also saved. Listings in Queens, Brooklyn (including Williamsburg), Jersey City, and Hoboken qualify only with an estimated public-transit commute of at most 20 minutes from the apartment to any Manhattan arrival station, including walking, typical waits, and transfers. This is separate from the office commute to 620 8th Ave.
+
+The evaluator stores a separate Manhattan-arrival time, station, and route. Unknown/missing estimates or routes fail the regional preference check, including older listings until they are re-evaluated. The cutoff is enforced after score bonuses, again before notifications, and in the dashboard's saved-search filter. Location and commute extraction still use AI estimates, not independently verified geocoding or live transit routing.
+
+Scrapers collect regional candidates; the evaluator verifies their borough/city, and alerts enforce the saved locations regardless of score bonuses. The dashboard defaults to saved search areas and remembers its display filter independently. Historical listings are retained under All collected listings. Budgets and the commute destination are unchanged. StreetEasy and Compass cover all five regions; RentHop covers Manhattan, Brooklyn, Queens, and Jersey City. Unknown locations cannot trigger an alert. NYC building-health checks use the actual borough; New Jersey health stays unverified.
+
+Restart the daemon and API once after installing this code. Subsequent edits to the preference JSON are read without a restart. Previously processed listings are not automatically re-notified.
+
+## macOS automatic startup and wake recovery
+
+Start the desired housing processes, save their configuration, then install the user LaunchAgent:
+
+```sh
+npm run daemon
+npx pm2 save
+npm run startup:install
+```
+
+If the services are already running, use `npx pm2 save` and `npm run startup:install`. The installer captures the current Node executable and uses absolute paths, so startup does not depend on shell initialization or NVM being loaded. Re-run it if that Node installation is moved or removed. `node scripts/macos/install.cjs --print` previews the generated plist without changing macOS settings.
+
+After a reboot, services start when the user logs in. A calendar check runs every minute and after a missed interval during sleep; scraping remains paused while the Mac is asleep. The check reads the current PM2 saved list and restores only saved `housing-daemon`, `housing-scraper`, and `housing-api` services. It preserves their checkout, environment, and Node interpreter and leaves healthy processes running. Removed services are not recreated, and services deliberately stopped and then saved remain stopped. See [Apple's launchd scheduling documentation](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html) for wake behavior.
+
+Use `npm run startup:remove` to disable automatic recovery; existing services keep running until stopped separately. To keep one service stopped, run `npx pm2 stop NAME` followed by `npx pm2 save`. Recovery logs live under `$PM2_HOME/logs/housing-autostart-{out,error}.log` (`~/.pm2/logs` by default). Keep `.env`, databases, and PM2 dump files out of version control.

@@ -67,11 +67,11 @@ function fetchJson(url) {
     });
 }
 
-async function fetchHPDViolations(houseNumber, streetName) {
+async function fetchHPDViolations(houseNumber, streetName, borough) {
     // SODA endpoint: Housing Maintenance Code Violations
     const street = encodeURIComponent(streetName);
     const num = encodeURIComponent(houseNumber);
-    const url = `https://data.cityofnewyork.us/resource/wvxf-dwi5.json?$limit=100&housenumber=${num}&streetname=${street}&boroid=1&$order=novissueddate%20DESC`;
+    const url = `https://data.cityofnewyork.us/resource/wvxf-dwi5.json?$limit=100&housenumber=${num}&streetname=${street}&boroid=${({ Manhattan: 1, Brooklyn: 3, Queens: 4 })[borough]}&$order=novissueddate%20DESC`;
 
     const records = await fetchJson(url);
     if (!Array.isArray(records)) return { total: 0, open: 0, classC: 0, bedbugs: 0, heat: 0 };
@@ -104,10 +104,10 @@ async function fetchHPDViolations(houseNumber, streetName) {
     return { total: records.length, open, classC, bedbugs, heat };
 }
 
-async function fetch311Complaints(houseNumber, streetName) {
+async function fetch311Complaints(houseNumber, streetName, borough) {
     // SODA endpoint: 311 Service Requests
     const incidentAddress = encodeURIComponent(`${houseNumber} ${streetName}`);
-    const url = `https://data.cityofnewyork.us/resource/erm2-nwe9.json?$limit=50&incident_address=${incidentAddress}&borough=MANHATTAN&$order=created_date%20DESC`;
+    const url = `https://data.cityofnewyork.us/resource/erm2-nwe9.json?$limit=50&incident_address=${incidentAddress}&borough=${borough.toUpperCase()}&$order=created_date%20DESC`;
 
     const records = await fetchJson(url);
     if (!Array.isArray(records)) return { total: 0, heat: 0, bedbugs: 0, rodents: 0 };
@@ -132,7 +132,10 @@ async function fetch311Complaints(houseNumber, streetName) {
     return { total: records.length, heat, bedbugs, rodents };
 }
 
-async function checkBuildingHealth(rawAddress) {
+async function checkBuildingHealth(rawAddress, borough = 'Manhattan') {
+    if (!['Manhattan', 'Brooklyn', 'Queens'].includes(borough)) {
+        return { grade: 'Unknown', summary: 'Building health unverified: outside supported NYC boroughs or location unknown', isHazardous: false };
+    }
     const parsed = parseAddress(rawAddress);
     if (!parsed) {
         return {
@@ -148,8 +151,8 @@ async function checkBuildingHealth(rawAddress) {
 
     try {
         const [hpd, c311] = await Promise.all([
-            fetchHPDViolations(parsed.houseNumber, parsed.streetName),
-            fetch311Complaints(parsed.houseNumber, parsed.streetName)
+            fetchHPDViolations(parsed.houseNumber, parsed.streetName, borough),
+            fetch311Complaints(parsed.houseNumber, parsed.streetName, borough)
         ]);
 
         const totalBedbugs = hpd.bedbugs + c311.bedbugs;

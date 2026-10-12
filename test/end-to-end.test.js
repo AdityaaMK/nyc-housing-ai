@@ -27,6 +27,12 @@ mock('@google/generative-ai', { GoogleGenerativeAI: class { getGenerativeModel()
  const data = prompt.includes('parsing an inbound') ? {
   is_tour_invitation: true, proposed_datetime: '2026-10-20T17:30:00-04:00', human_readable_time: 'October 20 at 5:30 PM', listing_address: listing.name, broker_name: 'Broker & Partner', broker_email: 'wrong-address@example.test', summary: 'A tour <offered>', special_instructions: 'Buzz 4B'
  } : { suitability_score: 90, red_flags: [], pros: ['Dishwasher'], true_gross_rent: 2500, is_fee: false, fee_estimate: 'None', neighborhood: "Hell's Kitchen", commute_minutes: 15 };
+ const boundary = prompt.match(/Listing Title: Commute boundary (\d+(?:\.\d+)?)/);
+ if (boundary) Object.assign(data, {
+  neighborhood: 'Williamsburg', location_area: 'Brooklyn', commute_minutes: 45,
+  manhattan_commute_minutes: Number(boundary[1]), manhattan_arrival_station: '1 Av',
+  manhattan_commute_summary: 'Walk, typical wait, L train to 1 Av in Manhattan'
+ });
  return { response: { text: () => JSON.stringify(data) } };
  } }; } } });
 mock('imap-simple', { connect: async () => ({
@@ -86,4 +92,23 @@ test('listing ingestion → deduplication → AI → notification retry → tour
  assert.equal((await nudge.sendNudge(actionId)).success, false);
  assert.equal(emails.length, 2);
  assert.equal((await nudge.skipNudge(actionId)).success, true);
+});
+
+test('Manhattan arrival estimates survive evaluation and storage without rounding across the alert cutoff', async () => {
+ for (const minutes of [20, 20.1]) {
+  await pool.query('INSERT INTO listings (id, title, url, price, bedrooms, bathrooms) VALUES ($1, $2, $3, 2500, 1, 1)',
+   ['boundary-' + minutes, 'Commute boundary ' + minutes, 'https://example.test/commute-' + minutes]);
+ }
+ await require('../src/evaluator').evaluateListings();
+ const rows = (await pool.query("SELECT * FROM listings WHERE id LIKE 'boundary-%' ORDER BY id")).rows;
+ assert.equal(rows[0].manhattan_commute_minutes, 20);
+ assert.equal(rows[0].commute_minutes, 45, 'Office commute remains separate');
+ assert.equal(rows[0].manhattan_arrival_station, '1 Av');
+ assert.equal(rows[0].suitability_score, 90);
+ assert.equal(rows[1].manhattan_commute_minutes, 20.1);
+ assert.equal(rows[1].suitability_score, 74);
+ const before = alerts.length;
+ await require('../src/notifier').notifyHighScoringListings();
+ assert.equal(alerts.length, before + 1);
+ assert.ok(alerts.at(-1).text.includes('20 min to 1 Av'));
 });
