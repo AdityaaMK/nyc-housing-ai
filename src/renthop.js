@@ -97,9 +97,7 @@ async function scrapeRentHop(browser) {
                         }
                     } catch(e) {}
 
-                    if (!normalizedAddress) {
-                        normalizedAddress = normalizeAddress(displayTitle);
-                    }
+                    normalizedAddress = normalizeAddress(displayTitle) || normalizedAddress;
 
                     const numericId = url.split("/").pop();
                     const id = `renthop_${numericId}`;

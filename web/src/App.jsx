@@ -6,7 +6,6 @@ import {
   Bath,
   TriangleAlert,
   CheckCircle,
-  Search,
   ThumbsDown,
   Mail,
   Activity,
@@ -21,7 +20,16 @@ import {
   LayoutGrid
 } from 'lucide-react';
 
+const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+async function requestApi(path, options) {
+  const response = await fetch(apiBase + path, options);
+  const data = await response.json();
+  if (!response.ok || data.success === false) throw new Error(data.error || data.reason || 'Request failed');
+  return data;
+}
+
 function App() {
+  const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('pipeline'); // 'pipeline' | 'tours' | 'map'
   const [listings, setListings] = useState([]);
   const [tours, setTours] = useState([]);
@@ -33,12 +41,13 @@ function App() {
     fetchAllData();
   }, []);
 
-  const fetchAllData = async () => {
+  async function fetchAllData() {
     try {
+      setError('');
       const [listRes, tourRes, statRes] = await Promise.all([
-        fetch('http://localhost:3001/api/listings').then(r => r.json()).catch(() => []),
-        fetch('http://localhost:3001/api/tours').then(r => r.json()).catch(() => []),
-        fetch('http://localhost:3001/api/stats').then(r => r.json()).catch(() => null)
+        requestApi('/api/listings'),
+        requestApi('/api/tours'),
+        requestApi('/api/stats')
       ]);
       setListings(Array.isArray(listRes) ? listRes : []);
       setTours(Array.isArray(tourRes) ? tourRes : []);
@@ -46,13 +55,14 @@ function App() {
       setLoading(false);
     } catch (err) {
       console.error(err);
+      setError(err.message);
       setLoading(false);
     }
   };
 
   const updateStatus = async (id, status) => {
     try {
-      await fetch(`http://localhost:3001/api/listings/${id}/status`, {
+      await requestApi(`/api/listings/${encodeURIComponent(id)}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
@@ -60,18 +70,20 @@ function App() {
       fetchAllData();
     } catch (err) {
       console.error(err);
+      setError(err.message);
     }
   };
 
   const confirmTour = async (tourId) => {
     try {
-      await fetch(`http://localhost:3001/api/tours/${tourId}/confirm`, {
+      await requestApi(`/api/tours/${encodeURIComponent(tourId)}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
       fetchAllData();
     } catch (err) {
       console.error(err);
+      setError(err.message);
     }
   };
 
@@ -96,6 +108,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-indigo-50/40 text-slate-900 p-4 md:p-8 font-sans selection:bg-indigo-100">
       <div className="max-w-[1500px] mx-auto">
+        {error && <div role="alert" className="mb-4 rounded-xl bg-red-50 border border-red-200 p-4 text-red-800">Could not complete request: {error}</div>}
         
         {/* HEADER */}
         <header className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-sm border border-white">
@@ -107,7 +120,7 @@ function App() {
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900">NYC Housing AI Copilot</h1>
                 <span className="px-2.5 py-0.5 text-xs font-bold bg-emerald-100 text-emerald-700 rounded-full border border-emerald-200">
-                  Live 24/7
+                  Housing Monitor
                 </span>
               </div>
               <p className="text-slate-500 font-medium text-sm mt-0.5">
@@ -303,22 +316,22 @@ function PipelineColumn({ title, count, listings, theme, onPass, onApply }) {
 function ListingCard({ l, onPass, onApply }) {
   let redFlags = [];
   let pros = [];
-  try { redFlags = JSON.parse(l.red_flags || '[]'); } catch(e){}
-  try { pros = JSON.parse(l.pros || '[]'); } catch(e){}
+  try { redFlags = JSON.parse(l.red_flags || '[]'); } catch {}
+  try { pros = JSON.parse(l.pros || '[]'); } catch {}
 
   let health = null;
   try {
     if (l.building_health) {
       health = typeof l.building_health === 'string' ? JSON.parse(l.building_health) : l.building_health;
     }
-  } catch(e){}
+  } catch {}
 
   let crossPosted = [];
   try {
     if (l.cross_posted_sources) {
       crossPosted = typeof l.cross_posted_sources === 'string' ? JSON.parse(l.cross_posted_sources) : l.cross_posted_sources;
     }
-  } catch(e){}
+  } catch {}
 
   // Score Badge Color
   const getScoreColor = (score) => {
@@ -402,12 +415,12 @@ function ListingCard({ l, onPass, onApply }) {
               <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
               <span>HPD Building Health: Grade B (Moderate History)</span>
             </div>
-          ) : (
+          ) : health.grade === 'C' ? (
             <div className="flex items-center gap-1.5 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200/60 px-2.5 py-1 rounded-lg">
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
               <span>HPD Building Health: Grade C (⚠️ {health.classC || 0} Class C Hazards)</span>
             </div>
-          )}
+          ) : <div className="text-xs text-slate-500">Building health: unverified</div>}
         </div>
       )}
 
@@ -491,7 +504,7 @@ function ToursView({ tours, onConfirm }) {
             <Calendar className="w-6 h-6 text-indigo-600" /> Inbound Tour Schedules & Bookings
           </h2>
           <p className="text-slate-500 text-sm mt-1">
-            Brokers replying with showings automatically trigger calendar events and acceptance emails
+            Review broker proposals, add a tour to your calendar, and confirm when you are ready
           </p>
         </div>
         <span className="px-3 py-1 bg-indigo-100 text-indigo-800 text-xs font-black rounded-full">
@@ -525,7 +538,7 @@ function ToursView({ tours, onConfirm }) {
                   {tour.status === 'confirmed' ? '✅ Confirmed' : '⏳ Tour Proposed'}
                 </span>
                 <span className="text-xs text-slate-400">
-                  {new Date(tour.created_at || Date.now()).toLocaleDateString()}
+                  {tour.created_at ? new Date(tour.created_at).toLocaleDateString() : 'Date unavailable'}
                 </span>
               </div>
 
@@ -551,14 +564,14 @@ function ToursView({ tours, onConfirm }) {
               </div>
 
               <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                <a
+                {tour.calendar_url && <a
                   href={tour.calendar_url}
                   target="_blank"
                   rel="noreferrer"
                   className="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1.5 transition-colors border border-indigo-200"
                 >
                   <Calendar className="w-3.5 h-3.5" /> Add to Google Calendar
-                </a>
+                </a>}
 
                 {tour.status !== 'confirmed' && (
                   <button

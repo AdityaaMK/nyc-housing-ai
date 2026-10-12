@@ -125,7 +125,7 @@ function setupBotHandlers(botInstance) {
                 await ctx.answerCallbackQuery({ text: "✍️ Generating customized Intro Packet..." });
 
                 const res = await pool.query(
-                    `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 OR md5(id) = $1 LIMIT 1`,
+                    `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 LIMIT 1`,
                     [actionId]
                 );
                 const listing = res.rows[0];
@@ -135,20 +135,22 @@ function setupBotHandlers(botInstance) {
                     return;
                 }
 
-                await pool.query(
-                    `UPDATE listings SET status = 'applied', applied_at = CURRENT_TIMESTAMP WHERE id = $1 OR id_hash = $1 OR md5(id) = $1`,
-                    [actionId]
-                );
-
                 const introPacket = await generateIntroPacket(listing);
 
                 // Attempt automated headless submission
                 console.log(`🤖 Attempting auto-inquiry for: ${listing.title}`);
                 const autoResult = await submitInquiry(listing, introPacket);
 
+                if (autoResult?.success) {
+                    await pool.query(
+                        `UPDATE listings SET status = 'applied', applied_at = CURRENT_TIMESTAMP WHERE id = $1 OR id_hash = $1`,
+                        [actionId]
+                    );
+                }
+
                 if (autoResult && autoResult.recipient) {
                     await pool.query(
-                        `UPDATE listings SET broker_email = $1 WHERE id = $2 OR id_hash = $2 OR md5(id) = $2`,
+                        `UPDATE listings SET broker_email = $1 WHERE id = $2 OR id_hash = $2`,
                         [autoResult.recipient, actionId]
                     );
                 }

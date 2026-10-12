@@ -38,9 +38,9 @@ function generateGoogleCalendarUrl({ title, startTime, endTime, location, detail
     return `${base}&text=${text}&dates=${dates}&details=${det}&location=${loc}`;
 }
 
-async function analyzeInboundEmail(subject, from, bodyText) {
+async function analyzeInboundEmail(subject, from, bodyText, receivedAt = new Date().toISOString()) {
     if (!process.env.GEMINI_API_KEY) {
-        return { is_tour_invitation: false };
+        return null;
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -52,6 +52,7 @@ async function analyzeInboundEmail(subject, from, bodyText) {
     const prompt = `
 You are an expert NYC rental assistant parsing an inbound reply email from a real estate broker or landlord.
 
+Email date/time: ${receivedAt}. Interpret relative dates from this email date in America/New_York.
 Subject: ${subject}
 From: ${from}
 Email Body:
@@ -60,7 +61,7 @@ ${bodyText}
 Analyze whether this email is proposing, inviting, or confirming an apartment tour / showing date or time.
 Output a JSON object with the following exact keys:
 - "is_tour_invitation": (boolean) true if broker is offering, proposing, or confirming a tour/showing time.
-- "proposed_datetime": (string or null) ISO 8601 string if a specific date/time was mentioned (assume current year if omitted, NYC Eastern Time).
+- "proposed_datetime": (string or null) ISO 8601 string including the NYC UTC offset if a specific date/time was mentioned. Use null if the time is ambiguous; never invent a time.
 - "human_readable_time": (string or null) e.g., "Tuesday, Sep 16 at 5:30 PM".
 - "listing_address": (string) the apartment or building address mentioned.
 - "broker_name": (string) the broker's name if identified.
@@ -74,7 +75,7 @@ Output a JSON object with the following exact keys:
         return JSON.parse(result.response.text());
     } catch (err) {
         console.error("AI Inbound Email Parse Error:", err.message);
-        return { is_tour_invitation: false };
+        return null;
     }
 }
 
@@ -106,7 +107,6 @@ async function checkInboundReplies(botApi, chatId) {
         for (const item of messages) {
             const uid = item.attributes.uid;
             if (processedEmailIds.has(uid)) continue;
-            processedEmailIds.add(uid);
 
             const header = item.parts.find(p => p.which === "HEADER");
             const textPart = item.parts.find(p => p.which === "TEXT");
@@ -130,7 +130,7 @@ async function checkInboundReplies(botApi, chatId) {
                                       lowerFrom.includes("marketing") ||
                                       lowerFrom.includes("update") ||
                                       lowerSub.includes("digest");
-            if (isSpamOrMarketing) continue;
+            if (isSpamOrMarketing) { processedEmailIds.add(uid); continue; }
 
             const cleanBody = (typeof body === "string" ? body : "")
                 .replace(/<[^>]+>/g, " ")
@@ -149,76 +149,44 @@ async function checkInboundReplies(botApi, chatId) {
                                lowerBody.includes("showing") ||
                                lowerBody.includes("available for viewing");
 
-            if (!isRelevant) continue;
+            if (!isRelevant) { processedEmailIds.add(uid); continue; }
 
             console.log(`   🔍 Analyzing broker reply: "${subject}" from: ${from}`);
-            const analysis = await analyzeInboundEmail(subject, from, cleanBody);
+            const analysis = await analyzeInboundEmail(subject, from, cleanBody, header?.body?.date?.[0]);
 
+            if (analysis?.is_tour_invitation === false) processedEmailIds.add(uid);
             if (analysis && analysis.is_tour_invitation) {
                 console.log(`   🎉 Tour Invitation Detected! Address: ${analysis.listing_address} | Time: ${analysis.human_readable_time}`);
 
-                // Mark seen so we don't re-notify
-                try {
-                    await connection.addFlags(uid, "\\Seen");
-                } catch {}
+                const startTime = analysis.proposed_datetime ? new Date(analysis.proposed_datetime) : null;
+                const hasTime = startTime && Number.isFinite(startTime.getTime());
+                const endTime = hasTime ? new Date(startTime.getTime() + 45 * 60 * 1000) : null;
 
-                // Default 45 min duration
-                let startTime = new Date();
-                if (analysis.proposed_datetime) {
-                    startTime = new Date(analysis.proposed_datetime);
-                } else {
-                    startTime.setDate(startTime.getDate() + 1);
-                    startTime.setHours(17, 0, 0, 0); // Default tomorrow 5pm
-                }
-                const endTime = new Date(startTime.getTime() + 45 * 60 * 1000);
-
-                const calendarUrl = generateGoogleCalendarUrl({
+                const calendarUrl = hasTime ? generateGoogleCalendarUrl({
                     title: analysis.listing_address || "Apartment Tour",
                     startTime,
                     endTime,
                     location: analysis.listing_address,
                     details: `Broker: ${analysis.broker_name || from}\nNotes: ${analysis.special_instructions || "None"}\nSummary: ${analysis.summary}`
-                });
+                }) : null;
 
                 // Generate unique tour ID for confirmation button
-                const tourId = crypto.createHash("md5").update(subject + from + Date.now()).digest("hex").slice(0, 12);
+                const tourId = crypto.createHash("md5").update(`${process.env.GMAIL_USER}:${connection.imap?._box?.uidvalidity || "inbox"}:${uid}`).digest("hex").slice(0, 12);
 
-                // Save tour proposal in DB if available
-                try {
-                    await pool.query(`
-                        CREATE TABLE IF NOT EXISTS tour_schedules (
-                            id TEXT PRIMARY KEY,
-                            listing_address TEXT,
-                            broker_email TEXT,
-                            broker_name TEXT,
-                            proposed_time TEXT,
-                            special_instructions TEXT,
-                            status TEXT DEFAULT 'proposed',
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        );
-                    `);
-                    await pool.query(`
-                        INSERT INTO tour_schedules (id, listing_address, broker_email, broker_name, proposed_time, special_instructions)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        ON CONFLICT (id) DO NOTHING
-                    `, [
-                        tourId,
-                        analysis.listing_address || subject,
-                        analysis.broker_email || from,
-                        analysis.broker_name || "Broker",
-                        analysis.human_readable_time || "TBD",
-                        analysis.special_instructions || null
-                    ]);
-                } catch (e) {
-                    console.warn("DB tour record note:", e.message);
-                }
+                await pool.query(`
+                    INSERT INTO tour_schedules (id, listing_address, broker_email, broker_name, proposed_time, special_instructions, proposed_datetime)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING
+                `, [tourId, analysis.listing_address || subject, from.match(/<([^>]+)>/)?.[1] || from,
+                    analysis.broker_name || "Broker", analysis.human_readable_time || "TBD",
+                    analysis.special_instructions || null, hasTime ? startTime.toISOString() : null]);
+                const esc = value => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
                 const telegramMessage = `📅 <b>TOUR INVITATION RECEIVED!</b>\n\n` +
-                                        `🏢 <b>Listing:</b> ${analysis.listing_address || "NYC Apartment"}\n` +
-                                        `🕒 <b>Time:</b> <code>${analysis.human_readable_time || "Time specified in email"}</code>\n` +
-                                        `👤 <b>From:</b> ${analysis.broker_name || from}\n` +
-                                        `📝 <b>Instructions:</b> ${analysis.special_instructions || "None"}\n\n` +
-                                        `💬 <i>"${analysis.summary || subject}"</i>\n\n` +
+                                        `🏢 <b>Listing:</b> ${esc(analysis.listing_address || "NYC Apartment")}\n` +
+                                        `🕒 <b>Time:</b> <code>${esc(analysis.human_readable_time || "Time specified in email")}</code>\n` +
+                                        `👤 <b>From:</b> ${esc(analysis.broker_name || from)}\n` +
+                                        `📝 <b>Instructions:</b> ${esc(analysis.special_instructions || "None")}\n\n` +
+                                        `💬 <i>"${esc(analysis.summary || subject)}"</i>\n\n` +
                                         `👇 <i>Tap below to add directly to Google Calendar or confirm to broker:</i>`;
 
                 const api = botApi || (process.env.TELEGRAM_BOT_TOKEN ? new Api(process.env.TELEGRAM_BOT_TOKEN) : null);
@@ -230,12 +198,14 @@ async function checkInboundReplies(botApi, chatId) {
                         parse_mode: "HTML",
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: "📅 Add to Google Calendar", url: calendarUrl }],
+                                ...(calendarUrl ? [[{ text: "📅 Add to Google Calendar", url: calendarUrl }]] : []),
                                 [{ text: "✅ Confirm Tour with Broker", callback_data: `confirm_tour_${tourId}` }]
                             ]
                         }
                     });
                     console.log(`📱 Sent Tour Alert to Telegram for: ${analysis.listing_address}`);
+                    await connection.addFlags(uid, "\\Seen");
+                    processedEmailIds.add(uid);
                 }
             }
         }
@@ -253,6 +223,8 @@ async function confirmTourBooking(tourId) {
         const res = await pool.query(`SELECT * FROM tour_schedules WHERE id = $1 LIMIT 1`, [tourId]);
         const tour = res.rows[0];
         if (!tour) return { success: false, reason: "Tour schedule record not found" };
+
+        if (tour.status === "confirmed") return { success: true, tour };
 
         if (!tour.broker_email) {
             return { success: false, reason: "Broker email address unknown" };

@@ -14,7 +14,8 @@
     "daemon": "pm2 start ecosystem.config.js",
     "daemon:stop": "pm2 stop housing-daemon",
     "daemon:logs": "pm2 logs housing-daemon",
-    "daemon:status": "pm2 status"
+    "daemon:status": "pm2 status",
+    "test": "node --test test/*.test.js"
   },
   "repository": {
     "type": "git",

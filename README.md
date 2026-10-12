@@ -33,3 +33,18 @@ nyc-housing-ai/
 │   ├── outreach/           # Automated message generator & dispatchers
 │   └── bot/                # Telegram / SMS mobile notification bot
 ```
+
+## Local setup and verification
+
+Use Node.js 24 or later. Install the backend and dashboard dependencies with `npm ci` and `npm ci --prefix web`. If SQLite's native binding is missing, run `npm rebuild sqlite3` with install scripts enabled.
+
+Configure `.env` with `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GMAIL_USER`, and `GMAIL_APP_PASSWORD` for the connected workflow. Never commit this file. `DATABASE_URL` selects PostgreSQL; without it the app uses local SQLite (`listings.db`, or `SQLITE_PATH`). An unreachable configured PostgreSQL database now fails visibly rather than switching silently to a separate local database.
+
+- `npm test`: isolated SQLite integration tests, including ingestion, scoring, notification retry, inbound tour handling, HTTP endpoints, and simulated email dispatch. The suite uses temporary databases and simulated external services; it needs permission to listen on a local HTTP port.
+- `npm run build --prefix web`: build the dashboard.
+- `npm run lint --prefix web`: check dashboard source.
+- `npm run dashboard`: start the API and development dashboard.
+
+The dashboard uses `http://localhost:3001` by default; set `VITE_API_URL` at build time for another API origin. The daemon (`npm start` or `npm run daemon`) performs live external operations and requires the configured services.
+
+Unknown building health is displayed as unverified. Failed AI evaluations remain pending, failed notifications remain eligible for retry, and tours without a precise date/time do not receive an invented calendar time. Historical tours need a `proposed_datetime` value before a calendar link can be offered. Conservative apartment deduplication requires a house number and unit; listings with incomplete addresses may appear separately.

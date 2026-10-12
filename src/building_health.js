@@ -47,21 +47,23 @@ function parseAddress(rawAddress) {
 }
 
 function fetchJson(url) {
-    return new Promise((resolve) => {
-        https.get(url, { headers: { "User-Agent": "nyc-housing-ai" }, timeout: 10000 }, (res) => {
+    return new Promise((resolve, reject) => {
+        const request = https.get(url, { headers: { "User-Agent": "nyc-housing-ai" }, timeout: 10000 }, (res) => {
             if (res.statusCode !== 200) {
-                return resolve([]);
+                res.resume();
+                return reject(new Error(`NYC Open Data returned HTTP ${res.statusCode}`));
             }
             let data = "";
             res.on("data", chunk => data += chunk);
             res.on("end", () => {
                 try {
                     resolve(JSON.parse(data));
-                } catch {
-                    resolve([]);
+                } catch (err) {
+                    reject(err);
                 }
             });
-        }).on("error", () => resolve([]));
+        }).on("error", reject);
+        request.on("timeout", () => request.destroy(new Error("NYC Open Data request timed out")));
     });
 }
 
@@ -134,8 +136,8 @@ async function checkBuildingHealth(rawAddress) {
     const parsed = parseAddress(rawAddress);
     if (!parsed) {
         return {
-            grade: "A",
-            summary: "Building Health: Unverified (clean standard)",
+            grade: "Unknown",
+            summary: "Building health unverified: address could not be parsed",
             openViolations: 0,
             classC: 0,
             bedbugReports: 0,
@@ -172,6 +174,7 @@ async function checkBuildingHealth(rawAddress) {
         }
 
         if (totalHeat >= 3) {
+            isHazardous = true;
             if (grade !== "C") grade = "C";
             reasons.push(`${totalHeat} winter heat/hot water complaints`);
         } else if (totalHeat > 0 && grade === "A") {
@@ -205,8 +208,8 @@ async function checkBuildingHealth(rawAddress) {
     } catch (err) {
         console.warn("⚠️ Building health check failed:", err.message);
         return {
-            grade: "A",
-            summary: "Grade A (Clean)",
+            grade: "Unknown",
+            summary: "Building health unavailable: data lookup failed",
             openViolations: 0,
             classC: 0,
             bedbugReports: 0,

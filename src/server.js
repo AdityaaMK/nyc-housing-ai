@@ -31,7 +31,8 @@ app.post('/api/listings/:id/status', async (req, res) => {
     }
 
     try {
-        await pool.query(`UPDATE listings SET status = $1 WHERE id = $2`, [status, id]);
+        const result = await pool.query(`UPDATE listings SET status = $1 WHERE id = $2`, [status, id]);
+        if (!result.rowCount) return res.status(404).json({ error: 'Listing not found' });
         res.json({ success: true, id, status });
     } catch (err) {
         console.error(err);
@@ -42,23 +43,12 @@ app.post('/api/listings/:id/status', async (req, res) => {
 // Get all tours from tour_schedules
 app.get('/api/tours', async (req, res) => {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS tour_schedules (
-                id TEXT PRIMARY KEY,
-                listing_address TEXT,
-                broker_email TEXT,
-                broker_name TEXT,
-                proposed_time TEXT,
-                special_instructions TEXT,
-                status TEXT DEFAULT 'proposed',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
         const result = await pool.query(`SELECT * FROM tour_schedules ORDER BY created_at DESC`);
         
         // Enrich with calendar URLs
         const tours = result.rows.map(t => {
-            const startTime = new Date(Date.now() + 24 * 3600 * 1000);
+            const startTime = t.proposed_datetime ? new Date(t.proposed_datetime) : null;
+            if (!startTime || !Number.isFinite(startTime.getTime())) return { ...t, calendar_url: null };
             const endTime = new Date(startTime.getTime() + 45 * 60 * 1000);
             const calendarUrl = generateGoogleCalendarUrl({
                 title: t.listing_address || "Apartment Tour",
@@ -82,7 +72,7 @@ app.post('/api/tours/:id/confirm', async (req, res) => {
     const { id } = req.params;
     try {
         const result = await confirmTourBooking(id);
-        res.json(result);
+        res.status(result.success ? 200 : 400).json(result);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to confirm tour' });
@@ -122,7 +112,7 @@ app.get('/api/stats', async (req, res) => {
 
         let toursCount = 0;
         try {
-            const toursRes = await pool.query(`SELECT COUNT(*) FROM tour_schedules`);
+            const toursRes = await pool.query(`SELECT COUNT(*) AS count FROM tour_schedules`);
             toursCount = parseInt(toursRes.rows[0].count, 10);
         } catch(e) {}
 

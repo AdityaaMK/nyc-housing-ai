@@ -10,19 +10,7 @@ puppeteer.use(StealthPlugin());
 
 async function runAIEvaluation(listing, description) {
     if (!process.env.GEMINI_API_KEY) {
-        console.log("   [⚠️ MOCK AI: GEMINI_API_KEY not found in .env]");
-        const mockRedFlags = [];
-        if (description.toLowerCase().includes("flex")) mockRedFlags.push("Possible Flex/Railroad layout");
-        if (description.toLowerCase().includes("net")) mockRedFlags.push("Net Effective rent mentioned");
-        
-        return {
-            true_gross_rent: listing.price ? parseInt(listing.price) : 0,
-            is_fee: description.toLowerCase().includes("broker fee"),
-            fee_estimate: "Unknown",
-            red_flags: mockRedFlags,
-            pros: ["Mock Pro"],
-            suitability_score: Math.floor(Math.random() * 30) + 70
-        };
+        throw new Error("GEMINI_API_KEY is required to evaluate listings");
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -79,18 +67,7 @@ async function runAIEvaluation(listing, description) {
                 await new Promise(r => setTimeout(r, 1500));
             } else {
                 console.error("AI Evaluation failed", e.message);
-                return { 
-                    true_gross_rent: listing.price, 
-                    red_flags: ["AI Parse Error"], 
-                    pros: [], 
-                    suitability_score: 50, 
-                    is_fee: false, 
-                    fee_estimate: "Error",
-                    neighborhood: "Manhattan",
-                    is_preferred_neighborhood: false,
-                    commute_minutes: 30,
-                    commute_summary: "Estimated 30 mins to 620 8th Ave"
-                };
+                throw e;
             }
         }
     }
@@ -114,6 +91,7 @@ async function evaluateListings() {
         const page = await browser.newPage();
 
         for (const listing of pending) {
+            try {
             console.log(`\n🔍 Fetching details for: ${listing.title} (${listing.url})`);
             await page.goto(listing.url, { waitUntil: "domcontentloaded", timeout: 30000 });
             
@@ -133,7 +111,11 @@ async function evaluateListings() {
             }
 
             console.log(`   🧠 Sending to AI Evaluator... (Price: $${listing.price || "Unknown"})`);
+            if (!description.trim()) throw new Error("Listing description unavailable; evaluation deferred");
             const evaluation = await runAIEvaluation(listing, description);
+            if (!Number.isFinite(evaluation.suitability_score) || !Array.isArray(evaluation.red_flags) || !Array.isArray(evaluation.pros)) {
+                throw new Error("AI evaluation returned invalid fields; evaluation deferred");
+            }
             
             // Hard enforcement of budget caps and floors
             const beds = parseFloat(listing.bedrooms || 0);
@@ -164,7 +146,7 @@ async function evaluateListings() {
                 } else if (health.grade === 'B') {
                     evaluation.suitability_score = Math.max(0, evaluation.suitability_score - 5);
                     evaluation.red_flags.push(`Building Health: ${health.summary}`);
-                } else {
+                } else if (health.grade === 'A') {
                     evaluation.suitability_score = Math.min(100, evaluation.suitability_score + 5);
                     evaluation.pros.push(`Building Health: ${health.summary}`);
                 }
@@ -200,6 +182,9 @@ async function evaluateListings() {
                 console.log(`   🚨 Red Flags: ${evaluation.red_flags.join(", ")}`);
             }
             
+            } catch (err) {
+                console.warn(`Evaluation deferred for ${listing.id}: ${err.message}`);
+            }
             await new Promise(r => setTimeout(r, 2000));
         }
     } finally {

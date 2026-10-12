@@ -52,7 +52,7 @@ async function notifyHighScoringListings() {
             ? `\n📍 <b>Neighborhood:</b> ${esc(listing.neighborhood)} ${listing.is_preferred ? "⭐ (Preferred)" : ""}`
             : "";
         
-        const sourceName = listing.source === 'renthop' ? 'RentHop' : 'StreetEasy';
+        const sourceName = ({ renthop: "RentHop", compass: "Compass", streeteasy: "StreetEasy" })[listing.source] || "Listing";
         const sourceBadge = `\n🌐 <b>Source:</b> ${sourceName}`;
 
         const commuteInfo = listing.commute_summary
@@ -121,11 +121,13 @@ async function notifyHighScoringListings() {
                 console.log(`📱 Sent Telegram alert for: ${title} (Score: ${score}/100)`);
             } catch (e) {
                 console.error(`Failed to send Telegram message:`, e.message);
+                continue;
             }
         } else {
             console.log(`\n[MOCK PUSH NOTIFICATION TO PHONE]`);
             console.log(message.replace(/<[^>]*>?/gm, "")); 
             console.log(`[Buttons: View Listing | ✉️ Send Intro Packet | ❌ Pass]`);
+            continue;
         }
 
         await pool.query(`UPDATE listings SET is_notified = true WHERE id = $1`, [listing.id]);

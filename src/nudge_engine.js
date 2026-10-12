@@ -108,12 +108,13 @@ async function checkPendingNudges(botApi, chatId) {
 async function sendNudge(actionId) {
     try {
         const res = await pool.query(
-            `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 OR md5(id) = $1 LIMIT 1`,
+            `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 LIMIT 1`,
             [actionId]
         );
         const listing = res.rows[0];
         if (!listing) return { success: false, reason: "Listing not found in database." };
 
+        if (listing.status !== "applied" || listing.nudge_count > 0) return { success: false, reason: "Follow-up already handled or listing no longer awaiting a reply." };
         const brokerEmail = listing.broker_email;
         if (!brokerEmail) {
             return { success: false, reason: "No broker email recorded for this listing." };
@@ -143,7 +144,7 @@ async function sendNudge(actionId) {
 async function skipNudge(actionId) {
     try {
         await pool.query(
-            `UPDATE listings SET nudge_count = 1 WHERE id = $1 OR id_hash = $1 OR md5(id) = $1`,
+            `UPDATE listings SET nudge_count = 1 WHERE id = $1 OR id_hash = $1`,
             [actionId]
         );
         return { success: true };

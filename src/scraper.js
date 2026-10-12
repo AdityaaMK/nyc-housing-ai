@@ -46,7 +46,10 @@ async function scrapeStreetEasyFeed(browser) {
                                     const url = item.url;
                                     const bedrooms = parseFloat(item.numberOfBedrooms || 0);
                                     const bathrooms = parseFloat(item.numberOfBathroomsTotal || 0);
-                                    const price = item.price ? parseInt(item.price, 10) : null;
+                                    const rawPrice = item.price ?? item.additionalProperty?.find(property => property.name === 'Monthly Rent')?.value;
+                                    const parsedPrice = Number(String(rawPrice ?? '').replace(/[^0-9.]/g, ''));
+                                    const price = parsedPrice > 0 ? parsedPrice : null;
+                                    if (!id || !url || /bronx|brooklyn|queens|staten.island/i.test(url + ' ' + (item.address?.addressLocality || ''))) continue;
                                     
                                     // Verify against feed criteria
                                     if (!feed.match(bedrooms, bathrooms, price)) {
