@@ -3,6 +3,8 @@ const { Pool } = require('pg');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const crypto = require('crypto');
+const { migrateEvaluationQueue } = require('./evaluation_migration');
+const { migrateRentTerms } = require('./rent_migration');
 
 const columns = {
     url: 'TEXT', title: 'TEXT', price: 'INTEGER', bedrooms: 'REAL', bathrooms: 'REAL',
@@ -40,7 +42,7 @@ function sqliteQuery(sql, params = []) {
         return '?';
     });
     return new Promise((resolve, reject) => {
-        if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(converted)) {
+        if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(converted) || /\bRETURNING\b/i.test(converted)) {
             sqliteDb.all(converted, values, (err, rows) => err ? reject(err) : resolve({ rows, rowCount: rows.length }));
         } else {
             sqliteDb.run(converted, values, function(err) {
@@ -61,6 +63,8 @@ async function migrate(query, engine) {
             for (const [name, type] of Object.entries(fields)) await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${name} ${type}`);
         }
     }
+    await migrateEvaluationQueue(query, engine);
+    await migrateRentTerms(query, engine);
     const { rows } = await query('SELECT id FROM listings WHERE id_hash IS NULL');
     for (const row of rows) await query('UPDATE listings SET id_hash = $1 WHERE id = $2', [crypto.createHash('md5').update(row.id).digest('hex'), row.id]);
 }
@@ -74,6 +78,7 @@ async function initialize() {
         await new Promise((resolve, reject) => {
             sqliteDb = new sqlite3.Database(dbPath, err => err ? reject(err) : resolve());
         });
+        sqliteDb.configure('busyTimeout', 10000);
         await migrate(sqliteQuery, 'sqlite');
         activeEngine = 'sqlite';
     }
@@ -93,4 +98,4 @@ const pool = {
         if (sqliteDb) await new Promise((resolve, reject) => sqliteDb.close(err => err ? reject(err) : resolve()));
     }
 };
-module.exports = { pool, initDB };
+module.exports = { pool, initDB, migrate };

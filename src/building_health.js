@@ -46,9 +46,9 @@ function parseAddress(rawAddress) {
     return { houseNumber, streetName };
 }
 
-function fetchJson(url) {
+function fetchJson(url, signal) {
     return new Promise((resolve, reject) => {
-        const request = https.get(url, { headers: { "User-Agent": "nyc-housing-ai" }, timeout: 10000 }, (res) => {
+        const request = https.get(url, { headers: { "User-Agent": "nyc-housing-ai" }, timeout: 10000, signal }, (res) => {
             if (res.statusCode !== 200) {
                 res.resume();
                 return reject(new Error(`NYC Open Data returned HTTP ${res.statusCode}`));
@@ -67,14 +67,14 @@ function fetchJson(url) {
     });
 }
 
-async function fetchHPDViolations(houseNumber, streetName, borough) {
+async function fetchHPDViolations(houseNumber, streetName, borough, signal) {
     // SODA endpoint: Housing Maintenance Code Violations
     const street = encodeURIComponent(streetName);
     const num = encodeURIComponent(houseNumber);
     const url = `https://data.cityofnewyork.us/resource/wvxf-dwi5.json?$limit=100&housenumber=${num}&streetname=${street}&boroid=${({ Manhattan: 1, Brooklyn: 3, Queens: 4 })[borough]}&$order=novissueddate%20DESC`;
 
-    const records = await fetchJson(url);
-    if (!Array.isArray(records)) return { total: 0, open: 0, classC: 0, bedbugs: 0, heat: 0 };
+    const records = await fetchJson(url, signal);
+    if (!Array.isArray(records)) throw new Error('Invalid building health response');
 
     let open = 0;
     let classC = 0;
@@ -104,13 +104,13 @@ async function fetchHPDViolations(houseNumber, streetName, borough) {
     return { total: records.length, open, classC, bedbugs, heat };
 }
 
-async function fetch311Complaints(houseNumber, streetName, borough) {
+async function fetch311Complaints(houseNumber, streetName, borough, signal) {
     // SODA endpoint: 311 Service Requests
     const incidentAddress = encodeURIComponent(`${houseNumber} ${streetName}`);
     const url = `https://data.cityofnewyork.us/resource/erm2-nwe9.json?$limit=50&incident_address=${incidentAddress}&borough=${borough.toUpperCase()}&$order=created_date%20DESC`;
 
-    const records = await fetchJson(url);
-    if (!Array.isArray(records)) return { total: 0, heat: 0, bedbugs: 0, rodents: 0 };
+    const records = await fetchJson(url, signal);
+    if (!Array.isArray(records)) throw new Error('Invalid building health response');
 
     let heat = 0;
     let bedbugs = 0;
@@ -132,7 +132,7 @@ async function fetch311Complaints(houseNumber, streetName, borough) {
     return { total: records.length, heat, bedbugs, rodents };
 }
 
-async function checkBuildingHealth(rawAddress, borough = 'Manhattan') {
+async function checkBuildingHealth(rawAddress, borough = 'Manhattan', { signal } = {}) {
     if (!['Manhattan', 'Brooklyn', 'Queens'].includes(borough)) {
         return { grade: 'Unknown', summary: 'Building health unverified: outside supported NYC boroughs or location unknown', isHazardous: false };
     }
@@ -151,8 +151,8 @@ async function checkBuildingHealth(rawAddress, borough = 'Manhattan') {
 
     try {
         const [hpd, c311] = await Promise.all([
-            fetchHPDViolations(parsed.houseNumber, parsed.streetName, borough),
-            fetch311Complaints(parsed.houseNumber, parsed.streetName, borough)
+            fetchHPDViolations(parsed.houseNumber, parsed.streetName, borough, signal),
+            fetch311Complaints(parsed.houseNumber, parsed.streetName, borough, signal)
         ]);
 
         const totalBedbugs = hpd.bedbugs + c311.bedbugs;
@@ -209,7 +209,8 @@ async function checkBuildingHealth(rawAddress, borough = 'Manhattan') {
             isHazardous
         };
     } catch (err) {
-        console.warn("⚠️ Building health check failed:", err.message);
+        if (signal?.aborted) throw signal.reason;
+        console.warn("Building health lookup unavailable.");
         return {
             grade: "Unknown",
             summary: "Building health unavailable: data lookup failed",

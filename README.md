@@ -8,7 +8,7 @@ An intelligent, autonomous system built to solve the high-friction, hyper-compet
 
 1. **Sub-Minute Detection**: Beat the crowd to newly posted units (especially during peak summer months) using instant email ingestion webhooks and stealth scrapers.
 2. **AI Listing Analysis**:
-   - Detects hidden broker fees & net-effective rent traps.
+   - Detects hidden broker fees and calculates lease-average rent after concessions.
    - Flags undesirable layouts (e.g. railroad bedrooms, windowless interior rooms, walk-ups > 4th floor).
    - Computes realistic door-to-door transit times to key subway stations / office hubs.
 3. **Automated Tenant Outreach**:
@@ -47,7 +47,7 @@ Configure `.env` with `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 
 The dashboard uses `http://localhost:3001` by default; set `VITE_API_URL` at build time for another API origin. The daemon (`npm start` or `npm run daemon`) performs live external operations and requires the configured services.
 
-Unknown building health is displayed as unverified. Failed AI evaluations remain pending, failed notifications remain eligible for retry, and tours without a precise date/time do not receive an invented calendar time. Historical tours need a `proposed_datetime` value before a calendar link can be offered. Conservative apartment deduplication requires a house number and unit; listings with incomplete addresses may appear separately.
+Unknown building health is displayed as unverified. Failed AI evaluations enter the durable retry queue, failed notifications remain eligible for retry, and tours without a precise date/time do not receive an invented calendar time. Historical tours need a `proposed_datetime` value before a calendar link can be offered. Conservative apartment deduplication requires a house number and unit; listings with incomplete addresses may appear separately.
 
 ## Saved search locations
 
@@ -58,6 +58,40 @@ The evaluator stores a separate Manhattan-arrival time, station, and route. Unkn
 Scrapers collect regional candidates; the evaluator verifies their borough/city, and alerts enforce the saved locations regardless of score bonuses. The dashboard defaults to saved search areas and remembers its display filter independently. Historical listings are retained under All collected listings. Budgets and the commute destination are unchanged. StreetEasy and Compass cover all five regions; RentHop covers Manhattan, Brooklyn, Queens, and Jersey City. Unknown locations cannot trigger an alert. NYC building-health checks use the actual borough; New Jersey health stays unverified.
 
 Restart the daemon and API once after installing this code. Subsequent edits to the preference JSON are read without a restart. Previously processed listings are not automatically re-notified.
+
+## Durable scoring worker
+
+Scoring runs independently from scraping, alerts, and outreach:
+
+- `npm run evaluate -- --limit 10`: finite run, at most 10 distinct listings and 10 Gemini calls.
+- `npm run evaluate -- --limit 10 --no-retries`: finite trial; selects only listings with zero previous attempts.
+- `npm run evaluate:worker`: continuous scoring, explicitly started by the operator. No worker is automatically installed or enabled.
+
+Both entrypoints, and the existing daemon evaluator, share the database queue. Passed and already scored listings are excluded. Each listing has up to three attempts with one-minute and five-minute retry delays. Five-minute claims prevent concurrent/stale writes; expired claims are recovered as interrupted attempts. Requests are spaced by at least five seconds across workers. The continuous worker polls every 30 seconds. A shared, persistent rate-limit pause lasts at least five minutes, honors longer provider instructions, and does not consume listing attempts. Missing credentials fail before claiming; provider authentication/model errors release the claim and stop the run.
+
+Set `GEMINI_API_KEY`; optionally override the unchanged `gemini-flash-lite-latest` default with `GEMINI_MODEL`. Navigation is limited to 30 seconds, Gemini to 60 seconds, and an attempt to two minutes. SIGINT/SIGTERM cancel outstanding work and release the current claim. No immediate AI retries occur. Public errors are fixed summaries, never provider messages. `evaluation_control` stores shared request timing and has RLS enabled in PostgreSQL.
+
+The additive migration runs during database initialization and can be applied separately with `node scripts/migrate-scoring.js <private-backup-directory>`. Before a production upgrade, run `node scripts/backup-scoring.js` to save listings, tours, public-schema catalog metadata, table DDL, and a checksum in a private directory under `~/.local/state/nyc-housing-ai/backups/`. The migration command requires that backup, executes transactionally, and verifies every pre-existing non-queue listing field is unchanged. Historical evaluated listings are marked completed; their completion timestamp records the backfill time because their original evaluation time is unknown. Their scores, location flags, application status, and notification flags are retained.
+
+`GET /api/stats` includes `evaluation: { pending, processing, completed, retry_wait, failed }`. Listing responses include status, attempt count, retry eligibility, completion time, and sanitized errors, and exclude claim tokens and lease expiry. The dashboard shows these states and refreshes every 15 seconds while visible, keeping its last successful snapshot on refresh failures. Commute values are labeled AI estimates.
+
+Additional checks:
+
+- `node --test test/evaluation.test.js test/evaluation-api.test.js`: isolated SQLite queue and API checks.
+- `QUEUE_TEST_DATABASE_URL=postgres://user@127.0.0.1:55439/postgres node scripts/test-queue-postgres.js`: the same queue tests in a disposable local PostgreSQL instance. The test creates and removes a unique schema and refuses remote URLs.
+- `node scripts/test-dashboard.js`: browser checks with fixture API responses and a temporary local Vite server; requires permission to launch Chromium and listen locally.
+
+Live rollout intentionally leaves continuous scoring disabled. The existing scraper continues independently. No notification, outreach, or SQLite import is performed by the scoring commands.
+
+The independent scraper is available with `npm run scrape:worker` (a cycle followed by a 180-second wait). It imports neither the evaluator nor messaging code.
+
+The October 12, 2026 rollout applied the queue migration and completed a finite trial: 10 distinct listings, 10 Gemini requests, 10 saved scores, and no retries. All 2,344 scores present immediately before migration, along with application and notification fields, were verified unchanged. Saved-location enforcement passed for all trial results. Private description/result audits live beside the private backup. Continuous scoring remains disabled; the API and independent scraper are running. The saved runtime configuration now contains only the API and independent scraper. Startup recovery honors that saved configuration; it does not enable continuous scoring. The prior process and startup configurations are backed up privately.
+
+Budget checks use net effective rent over the initial lease: `(gross rent × (lease months − free months) − additional rent credits) ÷ lease months`, rounded to cents. Legitimate free-month concessions do not lower the score. The model extracts lease terms; code validates them and computes the average. Incomplete concession terms leave the average unverified and use gross rent for the budget check until terms are known. The dashboard shows calculated net effective rent and gross monthly payments separately; historical prices without extracted terms remain labeled advertised. Existing scores are preserved. For example, $5,225 gross with two months free over 18 months is $4,644.44 effective and fits the $5,000 budget.
+
+Commute routes remain unverified AI estimates, and listing pages can change prices between collection and evaluation. No additional scoring requests were made to investigate these findings.
+
+Listing cards with a usable street address and known borough/city provide a “Check office commute in Google Maps” transit link. It uses `TARGET_COMMUTE_ADDRESS` (default: 620 8th Avenue, New York) and requires no Maps API key. Confirm the origin and set a weekday arrival time in Maps. Opening the link does not automatically verify the saved AI estimate or change the listing's score. Automatic transit lookups are not configured.
 
 ## macOS automatic startup and wake recovery
 

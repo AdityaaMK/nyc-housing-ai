@@ -9,6 +9,7 @@ const { checkPendingNudges } = require('./nudge_engine');
 let isRunning = false;
 let shouldStop = false;
 let botInstance = null;
+const evaluationShutdown = new AbortController();
 
 async function runCycle() {
     if (isRunning) return;
@@ -22,7 +23,8 @@ async function runCycle() {
         await scrapeStreetEasy();
         
         console.log("\n▶️ STEP 2: RUNNING AI EVALUATOR");
-        await evaluateListings();
+        await evaluateListings({ signal: evaluationShutdown.signal });
+        if (shouldStop) return;
         
         console.log("\n▶️ STEP 3: DISPATCHING MOBILE NOTIFICATIONS");
         await notifyHighScoringListings();
@@ -61,6 +63,7 @@ async function startDaemon() {
 process.on('SIGINT', async () => {
     console.log("\nReceived SIGINT. Shutting down gracefully...");
     shouldStop = true;
+    evaluationShutdown.abort();
     if (!isRunning) {
         await pool.end();
         process.exit(0);
@@ -70,6 +73,7 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
     console.log("\nReceived SIGTERM. Shutting down gracefully...");
     shouldStop = true;
+    evaluationShutdown.abort();
     if (!isRunning) {
         await pool.end();
         process.exit(0);

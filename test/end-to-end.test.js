@@ -26,7 +26,7 @@ mock('../src/building_health', { checkBuildingHealth: async () => ({ grade: 'Unk
 mock('@google/generative-ai', { GoogleGenerativeAI: class { getGenerativeModel() { return { async generateContent(prompt) {
  const data = prompt.includes('parsing an inbound') ? {
   is_tour_invitation: true, proposed_datetime: '2026-10-20T17:30:00-04:00', human_readable_time: 'October 20 at 5:30 PM', listing_address: listing.name, broker_name: 'Broker & Partner', broker_email: 'wrong-address@example.test', summary: 'A tour <offered>', special_instructions: 'Buzz 4B'
- } : { suitability_score: 90, red_flags: [], pros: ['Dishwasher'], true_gross_rent: 2500, is_fee: false, fee_estimate: 'None', neighborhood: "Hell's Kitchen", commute_minutes: 15 };
+ } : { suitability_score: 90, red_flags: [], pros: ['Dishwasher'], true_gross_rent: 2500, rent_terms: { concessions_mentioned: false, lease_months: null, free_months: 0, rent_credit: 0 }, is_fee: false, fee_estimate: 'None', neighborhood: "Hell's Kitchen", location_area: 'Manhattan', is_preferred_neighborhood: true, commute_minutes: 15, commute_summary: '15 minutes via subway' };
  const boundary = prompt.match(/Listing Title: Commute boundary (\d+(?:\.\d+)?)/);
  if (boundary) Object.assign(data, {
   neighborhood: 'Williamsburg', location_area: 'Brooklyn', commute_minutes: 45,
@@ -48,7 +48,12 @@ test('listing ingestion → deduplication → AI → notification retry → tour
  let rows = (await pool.query('SELECT * FROM listings')).rows;
  assert.equal(rows.length, 1);
  await require('../src/normalizer').checkOrRecordDuplicate(pool, { normalizedAddress: rows[0].normalized_address, newUrl: 'https://compass.example.test/fixture', newSource: 'compass' });
- await require('../src/evaluator').evaluateListings();
+ await require('../src/evaluator').evaluateListings({ evaluate: async () => ({
+  suitability_score: 90, red_flags: [], pros: ['Dishwasher'], true_gross_rent: 2500,
+  rent_terms: { concessions_mentioned: false, lease_months: null, free_months: 0, rent_credit: 0 },
+  is_fee: false, fee_estimate: 'None', neighborhood: "Hell's Kitchen", location_area: 'Manhattan',
+  is_preferred_neighborhood: true, commute_minutes: 15, commute_summary: '15 minutes via subway'
+ }) });
  rows = (await pool.query('SELECT * FROM listings')).rows;
  assert.equal(rows[0].suitability_score, 90, 'Unknown health must not give a score bonus');
  assert.equal(rows[0].is_evaluated, 1);
@@ -99,7 +104,13 @@ test('Manhattan arrival estimates survive evaluation and storage without roundin
   await pool.query('INSERT INTO listings (id, title, url, price, bedrooms, bathrooms) VALUES ($1, $2, $3, 2500, 1, 1)',
    ['boundary-' + minutes, 'Commute boundary ' + minutes, 'https://example.test/commute-' + minutes]);
  }
- await require('../src/evaluator').evaluateListings();
+ await require('../src/evaluator').evaluateListings({ evaluate: async (listing, description, options) =>
+  require('../src/evaluator').runAIEvaluation(listing, description, { ...options, fetchImpl: async (_url, { body }) => {
+   const { GoogleGenerativeAI } = require('@google/generative-ai');
+   const model = new GoogleGenerativeAI('fixture').getGenerativeModel();
+   const result = await model.generateContent(JSON.parse(body).contents[0].parts[0].text);
+   return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: result.response.text() }] } }] }) };
+  } }) });
  const rows = (await pool.query("SELECT * FROM listings WHERE id LIKE 'boundary-%' ORDER BY id")).rows;
  assert.equal(rows[0].manhattan_commute_minutes, 20);
  assert.equal(rows[0].commute_minutes, 45, 'Office commute remains separate');

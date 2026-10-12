@@ -163,3 +163,17 @@ test('dashboard API serves saved preferences and recalculates stale location fla
         delete require.cache[require.resolve('../src/server')];
     }
 });
+
+test('malformed building lookup responses remain Unknown', async () => {
+    const https = require('node:https'), original = https.get;
+    https.get = (url, options, callback) => {
+        const request = new EventEmitter();
+        queueMicrotask(() => {
+            const response = new EventEmitter(); response.statusCode = 200;
+            callback(response); response.emit('data', '{}'); response.emit('end');
+        });
+        return request;
+    };
+    try { assert.equal((await require('../src/building_health').checkBuildingHealth('100 Main Street', 'Queens')).grade, 'Unknown'); }
+    finally { https.get = original; }
+});

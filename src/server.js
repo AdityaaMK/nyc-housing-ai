@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { pool, initDB } = require('./db');
+const { publicError } = require('./evaluation_errors');
+const { commuteMapsUrl } = require('./commute_links');
 const { confirmTourBooking, generateGoogleCalendarUrl } = require('./inbound_listener');
 
 const { loadPreferences, matchesLocation, locationArea } = require('./preferences');
@@ -22,7 +24,11 @@ app.get('/api/listings', async (req, res) => {
             `SELECT * FROM listings ORDER BY suitability_score DESC NULLS LAST, discovered_at DESC`
         );
         const preferences = loadPreferences();
-        res.json(result.rows.map(listing => ({ ...listing, location_area: locationArea(listing, preferences), is_preferred: matchesLocation(listing, preferences) })));
+        res.json(result.rows.map(row => {
+            const { evaluation_claim_token, evaluation_claim_expires_at, ...listing } = row;
+            return { ...listing, commute_maps_url: commuteMapsUrl(listing), evaluation_last_error: publicError(listing.evaluation_last_error),
+                location_area: locationArea(listing, preferences), is_preferred: matchesLocation(listing, preferences) };
+        }));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch listings' });
@@ -90,15 +96,17 @@ app.post('/api/tours/:id/confirm', async (req, res) => {
 // Get system statistics
 app.get('/api/stats', async (req, res) => {
     try {
-        const listingsRes = await pool.query(`SELECT status, suitability_score, building_health, price FROM listings`);
+        const listingsRes = await pool.query(`SELECT status, suitability_score, building_health, price, evaluation_status FROM listings`);
         const rows = listingsRes.rows;
 
+        const evaluation = { pending: 0, processing: 0, completed: 0, retry_wait: 0, failed: 0 };
         let total = rows.length;
         let inbox = 0, applied = 0, passed = 0;
         let gradeA = 0, gradeB = 0, gradeC = 0;
         let priceSum = 0, priceCount = 0;
 
         for (const r of rows) {
+            if (Object.hasOwn(evaluation, r.evaluation_status)) evaluation[r.evaluation_status]++;
             if (r.status === 'applied') applied++;
             else if (r.status === 'passed') passed++;
             else inbox++;
@@ -126,6 +134,7 @@ app.get('/api/stats', async (req, res) => {
 
         res.json({
             total,
+            evaluation,
             inbox,
             applied,
             passed,

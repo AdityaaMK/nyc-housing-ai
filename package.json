@@ -16,6 +16,9 @@
     "daemon:logs": "pm2 logs housing-daemon",
     "daemon:status": "pm2 status",
     "test": "node --test test/*.test.js",
+    "evaluate": "node src/evaluate_cli.js",
+    "evaluate:worker": "node src/evaluate_cli.js --continuous",
+    "scrape:worker": "node src/scrape_worker.js",
     "startup:install": "node scripts/macos/install.cjs",
     "startup:remove": "node scripts/macos/install.cjs --uninstall"
   },
