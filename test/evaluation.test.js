@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 process.env.DOTENV_CONFIG_PATH = '/dev/null';
 process.env.DATABASE_URL = '';
+process.env.DB_BACKEND = 'sqlite';
 process.env.GEMINI_API_KEY = 'fixture';
 const { migrate } = require('../src/db');
 const { migrateEvaluationQueue } = require('../src/evaluation_migration');

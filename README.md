@@ -93,6 +93,10 @@ Commute routes remain unverified AI estimates, and listing pages can change pric
 
 Listing cards with a usable street address and known borough/city provide a “Check office commute in Google Maps” transit link. It uses `TARGET_COMMUTE_ADDRESS` (default: 620 8th Avenue, New York) and requires no Maps API key. Confirm the origin and set a weekday arrival time in Maps. Opening the link does not automatically verify the saved AI estimate or change the listing's score. Automatic transit lookups are not configured.
 
+## HTTPS cloud backends
+
+For Supabase REST and Gmail API setup, local OAuth authorization, read-only diagnostics, migration, and rollback, see [the cloud HTTPS guide](docs/cloud-https.md). Existing backend defaults and continuous monitoring are unchanged.
+
 ## macOS automatic startup and wake recovery
 
 Start the desired housing processes, save their configuration, then install the user LaunchAgent:

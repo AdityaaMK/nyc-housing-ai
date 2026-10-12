@@ -19,6 +19,9 @@
     "evaluate": "node src/evaluate_cli.js",
     "evaluate:worker": "node src/evaluate_cli.js --continuous",
     "scrape:worker": "node src/scrape_worker.js",
+    "gmail:authorize": "node scripts/gmail-authorize.js",
+    "cloud:check": "node scripts/cloud-check.js",
+    "db:migrate:https": "node scripts/migrate-https.js",
     "startup:install": "node scripts/macos/install.cjs",
     "startup:remove": "node scripts/macos/install.cjs --uninstall"
   },
@@ -49,6 +52,8 @@
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sqlite": "^5.1.1",
-    "sqlite3": "^6.0.1"
+    "sqlite3": "^6.0.1",
+    "undici": "^6.28.0",
+    "mailparser": "^3.9.0"
   }
 }

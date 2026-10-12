@@ -1,7 +1,8 @@
+const { repository } = require('./repository');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { pool, initDB } = require('./db');
+const { initDB } = require('./db');
 const { publicError } = require('./evaluation_errors');
 const { commuteMapsUrl } = require('./commute_links');
 const { confirmTourBooking, generateGoogleCalendarUrl } = require('./inbound_listener');
@@ -20,9 +21,7 @@ app.get('/api/preferences', (req, res) => {
 // Get all listings
 app.get('/api/listings', async (req, res) => {
     try {
-        const result = await pool.query(
-            `SELECT * FROM listings ORDER BY suitability_score DESC NULLS LAST, discovered_at DESC`
-        );
+        const result = await repository.listListings();
         const preferences = loadPreferences();
         res.json(result.rows.map(row => {
             const { evaluation_claim_token, evaluation_claim_expires_at, ...listing } = row;
@@ -45,7 +44,7 @@ app.post('/api/listings/:id/status', async (req, res) => {
     }
 
     try {
-        const result = await pool.query(`UPDATE listings SET status = $1 WHERE id = $2`, [status, id]);
+        const result = await repository.setListingStatus(id, status);
         if (!result.rowCount) return res.status(404).json({ error: 'Listing not found' });
         res.json({ success: true, id, status });
     } catch (err) {
@@ -57,7 +56,7 @@ app.post('/api/listings/:id/status', async (req, res) => {
 // Get all tours from tour_schedules
 app.get('/api/tours', async (req, res) => {
     try {
-        const result = await pool.query(`SELECT * FROM tour_schedules ORDER BY created_at DESC`);
+        const result = await repository.listTours();
         
         // Enrich with calendar URLs
         const tours = result.rows.map(t => {
@@ -96,7 +95,7 @@ app.post('/api/tours/:id/confirm', async (req, res) => {
 // Get system statistics
 app.get('/api/stats', async (req, res) => {
     try {
-        const listingsRes = await pool.query(`SELECT status, suitability_score, building_health, price, evaluation_status FROM listings`);
+        const listingsRes = await repository.statsRows();
         const rows = listingsRes.rows;
 
         const evaluation = { pending: 0, processing: 0, completed: 0, retry_wait: 0, failed: 0 };
@@ -128,7 +127,7 @@ app.get('/api/stats', async (req, res) => {
 
         let toursCount = 0;
         try {
-            const toursRes = await pool.query(`SELECT COUNT(*) AS count FROM tour_schedules`);
+            const toursRes = await repository.countTours();
             toursCount = parseInt(toursRes.rows[0].count, 10);
         } catch(e) {}
 

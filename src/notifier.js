@@ -1,7 +1,8 @@
+const { repository } = require('./repository');
 require("dotenv").config();
 const crypto = require("crypto");
 const { Api } = require("node-telegram-bot-api");
-const { initDB, pool } = require("./db");
+const { initDB } = require("./db");
 
 const { loadPreferences, matchesLocation } = require('./preferences');
 
@@ -15,7 +16,7 @@ if (token) {
 
 async function notifyHighScoringListings() {
     const preferences = loadPreferences();
-    const res = await pool.query(`SELECT * FROM listings WHERE is_evaluated = true AND is_notified = false`);
+    const res = await repository.pendingNotifications();
     const pending = res.rows;
     
     if (pending.length === 0) {
@@ -37,7 +38,7 @@ async function notifyHighScoringListings() {
         // Only buzz phone if score is above 75 AND price is at least $1,800!
         if (score < 75 || !listing.price || listing.price < 1800) {
             console.log(`   ⏭️ Skipping Telegram buzz for "${listing.title}": ${!listing.price ? "Price unknown" : listing.price < 1800 ? `Price ($${listing.price}) < $1,800 minimum` : `Score ${score}/100 is below 75 threshold`}.`);
-            await pool.query(`UPDATE listings SET is_notified = true WHERE id = $1`, [listing.id]);
+            await repository.markNotified(listing.id);
             continue;
         }
 
@@ -143,7 +144,7 @@ async function notifyHighScoringListings() {
             continue;
         }
 
-        await pool.query(`UPDATE listings SET is_notified = true WHERE id = $1`, [listing.id]);
+        await repository.markNotified(listing.id);
     }
 }
 

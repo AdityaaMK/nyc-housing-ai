@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 process.env.DOTENV_CONFIG_PATH = '/dev/null';
 process.env.DATABASE_URL = '';
+process.env.DB_BACKEND = 'sqlite';
 process.env.SQLITE_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'housing-test-')), 'test.db');
 const { initDB, pool } = require('../src/db');
 after(() => pool.end());
