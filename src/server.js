@@ -4,9 +4,16 @@ const cors = require('cors');
 const { pool, initDB } = require('./db');
 const { confirmTourBooking, generateGoogleCalendarUrl } = require('./inbound_listener');
 
+const { loadPreferences, matchesLocation, locationArea } = require('./preferences');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+app.get('/api/preferences', (req, res) => {
+    try { res.json(loadPreferences()); }
+    catch { res.status(500).json({ error: 'Failed to load saved preferences' }); }
+});
 
 // Get all listings
 app.get('/api/listings', async (req, res) => {
@@ -14,7 +21,8 @@ app.get('/api/listings', async (req, res) => {
         const result = await pool.query(
             `SELECT * FROM listings ORDER BY suitability_score DESC NULLS LAST, discovered_at DESC`
         );
-        res.json(result.rows);
+        const preferences = loadPreferences();
+        res.json(result.rows.map(listing => ({ ...listing, location_area: locationArea(listing, preferences), is_preferred: matchesLocation(listing, preferences) })));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch listings' });

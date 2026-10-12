@@ -1,18 +1,8 @@
 const { pool } = require("./db");
 const { normalizeAddress, checkOrRecordDuplicate } = require("./normalizer");
 
-const COMPASS_FEEDS = [
-    {
-        name: "Compass 2B2B $1,800-$5,000 (Manhattan)",
-        url: "https://www.compass.com/for-rent/manhattan-ny/1800-5000-price/",
-        match: (beds, baths, price) => beds >= 2 && baths >= 2 && (price === null || (price >= 1800 && price <= 5000))
-    },
-    {
-        name: "Compass 1B/Studio $1,800-$2,700 (Manhattan)",
-        url: "https://www.compass.com/for-rent/manhattan-ny/1800-2700-price/",
-        match: (beds, baths, price) => beds <= 1 && (price === null || (price >= 1800 && price <= 2700))
-    }
-];
+const { getSearchFeeds } = require('./search_feeds');
+const { scopedAddress } = require('./preferences');
 
 async function scrapeCompass(browser) {
     let totalNew = 0;
@@ -24,7 +14,7 @@ async function scrapeCompass(browser) {
         );
         await page.setViewport({ width: 1280, height: 800 });
 
-        for (const feed of COMPASS_FEEDS) {
+        for (const feed of getSearchFeeds('compass')) {
             console.log(`📡 [Compass] Checking feed: ${feed.name}...`);
             try {
                 await page.goto(feed.url, { waitUntil: "networkidle2", timeout: 40000 });
@@ -79,8 +69,8 @@ async function scrapeCompass(browser) {
                         }
 
                         // Neighborhood (often after pipe or in text)
-                        let neighborhood = "Manhattan";
-                        const nMatch = text.match(/(?:West Village|East Village|Lower East Side|Financial District|Hell's Kitchen|Chelsea|Gramercy|SoHo|Tribeca|Upper East Side|Upper West Side|Midtown|Harlem)/i);
+                        let neighborhood = null;
+                        const nMatch = text.match(/(?:Williamsburg|West Village|East Village|Lower East Side|Financial District|Hell's Kitchen|Chelsea|Gramercy|SoHo|Tribeca|Upper East Side|Upper West Side|Midtown|Harlem)/i);
                         if (nMatch) neighborhood = nMatch[0];
 
                         items.push({
@@ -101,7 +91,7 @@ async function scrapeCompass(browser) {
                     const { beds, baths, price, url, neighborhood } = item;
                     if (!feed.match(beds, baths, price)) continue;
 
-                    const normalizedAddress = normalizeAddress(item.title);
+                    const normalizedAddress = scopedAddress(normalizeAddress(item.title), feed.area);
                     
                     // Generate unique Compass ID
                     let compId = "compass_" + Buffer.from(url).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(-16);
@@ -127,11 +117,11 @@ async function scrapeCompass(browser) {
                     const existingById = await pool.query(`SELECT id FROM listings WHERE id = $1`, [compId]);
                     if (existingById.rows.length === 0) {
                         await pool.query(
-                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address, neighborhood)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                            [compId, url, item.title, price, beds, baths, "compass", normalizedAddress, neighborhood]
+                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address, neighborhood, location_area)
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                            [compId, url, item.title, price, beds, baths, "compass", normalizedAddress, neighborhood, feed.area]
                         );
-                        console.log(`🎉 NEW MATCH [Compass]: ${item.title} | $${price || "?"} | ${beds} Bed / ${baths} Bath | ${neighborhood}`);
+                        console.log(`🎉 NEW CANDIDATE [Compass]: ${item.title} | $${price || "?"} | ${beds} Bed / ${baths} Bath | ${neighborhood}`);
                         totalNew++;
                     }
                 }

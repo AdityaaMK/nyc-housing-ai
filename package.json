@@ -15,7 +15,9 @@
     "daemon:stop": "pm2 stop housing-daemon",
     "daemon:logs": "pm2 logs housing-daemon",
     "daemon:status": "pm2 status",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "startup:install": "node scripts/macos/install.cjs",
+    "startup:remove": "node scripts/macos/install.cjs --uninstall"
   },
   "repository": {
     "type": "git",

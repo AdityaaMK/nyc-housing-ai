@@ -7,25 +7,15 @@ const { scrapeCompass } = require("./compass");
 
 puppeteer.use(StealthPlugin());
 
-const TARGET_FEEDS = [
-    {
-        name: "StreetEasy 2B2B $1,800-$5,000 (Manhattan)",
-        url: "https://streeteasy.com/for-rent/manhattan/beds:2|baths:2|price:1800-5000|sort:created",
-        match: (beds, baths, price) => beds >= 2 && baths >= 2 && (price === null || (price >= 1800 && price <= 5000))
-    },
-    {
-        name: "StreetEasy 1B/Studio $1,800-$2,700 (Manhattan)",
-        url: "https://streeteasy.com/for-rent/manhattan/beds:0-1|price:1800-2700|sort:created",
-        match: (beds, baths, price) => beds <= 1 && (price === null || (price >= 1800 && price <= 2700))
-    }
-];
+const { getSearchFeeds } = require('./search_feeds');
+const { scopedAddress } = require('./preferences');
 
 async function scrapeStreetEasyFeed(browser) {
     let totalNew = 0;
     const page = await browser.newPage();
     
     try {
-        for (const feed of TARGET_FEEDS) {
+        for (const feed of getSearchFeeds('streetEasy')) {
             console.log(`📡 [StreetEasy] Checking feed: ${feed.name}...`);
             try {
                 await page.goto(feed.url, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -49,7 +39,7 @@ async function scrapeStreetEasyFeed(browser) {
                                     const rawPrice = item.price ?? item.additionalProperty?.find(property => property.name === 'Monthly Rent')?.value;
                                     const parsedPrice = Number(String(rawPrice ?? '').replace(/[^0-9.]/g, ''));
                                     const price = parsedPrice > 0 ? parsedPrice : null;
-                                    if (!id || !url || /bronx|brooklyn|queens|staten.island/i.test(url + ' ' + (item.address?.addressLocality || ''))) continue;
+                                    if (!id || !url || /bronx|staten.island/i.test(url + ' ' + (item.address?.addressLocality || ''))) continue;
                                     
                                     // Verify against feed criteria
                                     if (!feed.match(bedrooms, bathrooms, price)) {
@@ -57,7 +47,7 @@ async function scrapeStreetEasyFeed(browser) {
                                     }
                                     
                                     const rawAddress = item.address ? item.address.streetAddress : null;
-                                    const normalizedAddress = normalizeAddress(title, rawAddress);
+                                    const normalizedAddress = scopedAddress(normalizeAddress(title, rawAddress), feed.area);
 
                                     // Check cross-site duplicate
                                     const duplicate = await checkOrRecordDuplicate(pool, {
@@ -74,10 +64,10 @@ async function scrapeStreetEasyFeed(browser) {
                                     
                                     if (res.rows.length === 0) {
                                         await pool.query(
-                                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                                            [id, url, title, price, bedrooms, bathrooms, "streeteasy", normalizedAddress]
+                                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address, location_area) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                                            [id, url, title, price, bedrooms, bathrooms, "streeteasy", normalizedAddress, feed.area]
                                         );
-                                        console.log(`🎉 NEW MATCH [StreetEasy]: ${title} | $${price || "?"} | ${bedrooms} Bed / ${bathrooms} Bath | Key: ${normalizedAddress}`);
+                                        console.log(`🎉 NEW CANDIDATE [StreetEasy]: ${title} | $${price || "?"} | ${bedrooms} Bed / ${bathrooms} Bath | Key: ${normalizedAddress}`);
                                         totalNew++;
                                     }
                                 }

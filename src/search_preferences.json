@@ -1,0 +1,10 @@
+{
+  "preferredNeighborhoods": [
+    { "name": "Lower East Side", "area": "Manhattan", "aliases": ["LES"] },
+    { "name": "Financial District", "area": "Manhattan", "aliases": ["FiDi"] },
+    { "name": "East Village", "area": "Manhattan", "aliases": [] },
+    { "name": "Hell's Kitchen", "area": "Manhattan", "aliases": ["Hells Kitchen", "Clinton"] },
+    { "name": "Williamsburg", "area": "Brooklyn", "aliases": [] }
+  ],
+  "includedAreas": ["Queens", "Brooklyn", "Jersey City", "Hoboken"]
+}
