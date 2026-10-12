@@ -5,6 +5,7 @@ const { pool, initDB } = require("./db");
 const { submitInquiry } = require("./auto_inquire");
 const { confirmTourBooking } = require("./inbound_listener");
 const { sendNudge, skipNudge } = require("./nudge_engine");
+const { isOutboundEnabled } = require("./runtime_safety");
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 let bot = null;
@@ -235,6 +236,10 @@ function setupBotHandlers(botInstance) {
 }
 
 async function startBot() {
+    if (!isOutboundEnabled()) {
+        console.log("🔒 Telegram bot polling disabled by runtime safety mode.");
+        return null;
+    }
     if (!token) {
         console.log("ℹ️ No TELEGRAM_BOT_TOKEN defined. Skipping bot listener.");
         return null;

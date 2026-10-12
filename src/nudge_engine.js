@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { isOutboundEnabled, outboundDisabledResult } = require("./runtime_safety");
 const { pool } = require("./db");
 const { sendBrokerEmail } = require("./mailer");
 const { Api } = require("node-telegram-bot-api");
@@ -36,6 +37,10 @@ function generateNudgeEmail(listing) {
 }
 
 async function checkPendingNudges(botApi, chatId) {
+    if (!isOutboundEnabled()) {
+        console.log("🔒 Broker nudge notifications disabled by runtime safety mode.");
+        return;
+    }
     const targetChatId = chatId || process.env.TELEGRAM_CHAT_ID;
     const api = botApi || (process.env.TELEGRAM_BOT_TOKEN ? new Api(process.env.TELEGRAM_BOT_TOKEN) : null);
 
@@ -106,6 +111,10 @@ async function checkPendingNudges(botApi, chatId) {
 }
 
 async function sendNudge(actionId) {
+    if (!isOutboundEnabled()) {
+        console.warn("🔒 Broker nudge blocked by runtime safety mode.");
+        return outboundDisabledResult("Broker nudge");
+    }
     try {
         const res = await pool.query(
             `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 OR md5(id) = $1 LIMIT 1`,

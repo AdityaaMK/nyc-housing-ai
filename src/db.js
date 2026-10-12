@@ -189,4 +189,13 @@ const pool = {
     }
 };
 
-module.exports = { pool, initDB };
+function getDatabaseStatus() {
+    const fallback = Boolean(process.env.DATABASE_URL) && activeEngine === 'sqlite';
+    return {
+        connected: Boolean(activeEngine === 'pg' ? pgPool : sqliteDb),
+        engine: activeEngine === 'pg' ? 'supabase-postgres' : 'sqlite',
+        fallback
+    };
+}
+
+module.exports = { pool, initDB, getDatabaseStatus };

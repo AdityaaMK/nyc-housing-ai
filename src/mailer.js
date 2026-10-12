@@ -1,5 +1,6 @@
 require("dotenv").config();
 const nodemailer = require("nodemailer");
+const { isOutboundEnabled, outboundDisabledResult } = require("./runtime_safety");
 
 let transporter = null;
 
@@ -88,6 +89,11 @@ async function extractAgentContact(listing, page) {
 }
 
 async function sendBrokerEmail({ to, subject, body }) {
+    if (!isOutboundEnabled()) {
+        console.warn("🔒 Outbound broker email blocked by runtime safety mode.");
+        return outboundDisabledResult("Broker email");
+    }
+
     const transport = getTransporter();
     const senderName = process.env.TENANT_NAME || "Adityaa Magesh Kumar";
     const senderEmail = process.env.GMAIL_USER || "adityaa.magesh@gmail.com";

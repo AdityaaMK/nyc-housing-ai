@@ -20,6 +20,27 @@ const TARGET_FEEDS = [
     }
 ];
 
+function getBrowserProxyArg() {
+    const proxyValue = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (!proxyValue) return null;
+
+    try {
+        const proxy = new URL(proxyValue);
+        if (!['http:', 'https:', 'socks4:', 'socks5:'].includes(proxy.protocol)) {
+            console.warn(`Ignoring unsupported browser proxy protocol: ${proxy.protocol}`);
+            return null;
+        }
+
+        // Deliberately omit credentials from Chromium's process arguments. If a
+        // deployment needs an authenticated proxy it must configure that through
+        // a credential-safe mechanism rather than exposing it in the process list.
+        return `--proxy-server=${proxy.protocol}//${proxy.host}`;
+    } catch {
+        console.warn('Ignoring invalid HTTPS_PROXY/HTTP_PROXY configuration.');
+        return null;
+    }
+}
+
 async function scrapeStreetEasyFeed(browser) {
     let totalNew = 0;
     const page = await browser.newPage();
@@ -95,9 +116,12 @@ async function scrapeStreetEasyFeed(browser) {
 
 async function scrapeAllSources() {
     console.log(`[${new Date().toISOString()}] Launching browser for multi-source ingestion cycle...`);
+    const proxyArg = getBrowserProxyArg();
+    const browserArgs = ["--no-sandbox", "--disable-setuid-sandbox"];
+    if (proxyArg) browserArgs.push(proxyArg);
     const browser = await puppeteer.launch({ 
         headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"]
+        args: browserArgs
     });
 
     try {
@@ -127,4 +151,4 @@ if (require.main === module) {
     run().catch(console.error);
 }
 
-module.exports = { run, scrapeStreetEasy: scrapeAllSources };
+module.exports = { run, scrapeStreetEasy: scrapeAllSources, getBrowserProxyArg };

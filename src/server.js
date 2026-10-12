@@ -1,12 +1,28 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { pool, initDB } = require('./db');
+const { pool, initDB, getDatabaseStatus } = require('./db');
 const { confirmTourBooking, generateGoogleCalendarUrl } = require('./inbound_listener');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+app.get('/api/health', async (req, res) => {
+    try {
+        await pool.query('SELECT 1 AS ok');
+        const database = getDatabaseStatus();
+        res.json({
+            status: database.fallback ? 'degraded' : 'ok',
+            database
+        });
+    } catch (err) {
+        res.status(503).json({
+            status: 'unhealthy',
+            database: { connected: false }
+        });
+    }
+});
 
 // Get all listings
 app.get('/api/listings', async (req, res) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Building,
   DollarSign,
@@ -6,7 +6,6 @@ import {
   Bath,
   TriangleAlert,
   CheckCircle,
-  Search,
   ThumbsDown,
   Mail,
   Activity,
@@ -29,11 +28,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [filterNeighborhood, setFilterNeighborhood] = useState('all');
 
-  useEffect(() => {
-    fetchAllData();
-  }, []);
-
-  const fetchAllData = async () => {
+  const fetchAllData = useCallback(async () => {
     try {
       const [listRes, tourRes, statRes] = await Promise.all([
         fetch('http://localhost:3001/api/listings').then(r => r.json()).catch(() => []),
@@ -48,7 +43,12 @@ function App() {
       console.error(err);
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const initialFetch = window.setTimeout(fetchAllData, 0);
+    return () => window.clearTimeout(initialFetch);
+  }, [fetchAllData]);
 
   const updateStatus = async (id, status) => {
     try {
@@ -303,22 +303,22 @@ function PipelineColumn({ title, count, listings, theme, onPass, onApply }) {
 function ListingCard({ l, onPass, onApply }) {
   let redFlags = [];
   let pros = [];
-  try { redFlags = JSON.parse(l.red_flags || '[]'); } catch(e){}
-  try { pros = JSON.parse(l.pros || '[]'); } catch(e){}
+  try { redFlags = JSON.parse(l.red_flags || '[]'); } catch {}
+  try { pros = JSON.parse(l.pros || '[]'); } catch {}
 
   let health = null;
   try {
     if (l.building_health) {
       health = typeof l.building_health === 'string' ? JSON.parse(l.building_health) : l.building_health;
     }
-  } catch(e){}
+  } catch {}
 
   let crossPosted = [];
   try {
     if (l.cross_posted_sources) {
       crossPosted = typeof l.cross_posted_sources === 'string' ? JSON.parse(l.cross_posted_sources) : l.cross_posted_sources;
     }
-  } catch(e){}
+  } catch {}
 
   // Score Badge Color
   const getScoreColor = (score) => {
@@ -525,7 +525,7 @@ function ToursView({ tours, onConfirm }) {
                   {tour.status === 'confirmed' ? '✅ Confirmed' : '⏳ Tour Proposed'}
                 </span>
                 <span className="text-xs text-slate-400">
-                  {new Date(tour.created_at || Date.now()).toLocaleDateString()}
+                  {tour.created_at ? new Date(tour.created_at).toLocaleDateString() : 'Date pending'}
                 </span>
               </div>
 

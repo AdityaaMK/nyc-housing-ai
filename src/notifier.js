@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { isOutboundEnabled } = require("./runtime_safety");
 const crypto = require("crypto");
 const { Api } = require("node-telegram-bot-api");
 const { initDB, pool } = require("./db");
@@ -12,6 +13,10 @@ if (token) {
 }
 
 async function notifyHighScoringListings() {
+    if (!isOutboundEnabled()) {
+        console.log("🔒 Telegram listing notifications disabled by runtime safety mode.");
+        return;
+    }
     const res = await pool.query(`SELECT * FROM listings WHERE is_evaluated = true AND is_notified = false`);
     const pending = res.rows;
     

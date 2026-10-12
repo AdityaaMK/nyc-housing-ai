@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { isOutboundEnabled, outboundDisabledResult } = require("./runtime_safety");
 const imaps = require("imap-simple");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Api } = require("node-telegram-bot-api");
@@ -79,6 +80,10 @@ Output a JSON object with the following exact keys:
 }
 
 async function checkInboundReplies(botApi, chatId) {
+    if (!isOutboundEnabled()) {
+        console.log("🔒 Inbound reply processing and tour alerts disabled by runtime safety mode.");
+        return;
+    }
     if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
         return;
     }
@@ -249,6 +254,10 @@ async function checkInboundReplies(botApi, chatId) {
 }
 
 async function confirmTourBooking(tourId) {
+    if (!isOutboundEnabled()) {
+        console.warn("🔒 Tour confirmation blocked by runtime safety mode.");
+        return outboundDisabledResult("Tour confirmation");
+    }
     try {
         const res = await pool.query(`SELECT * FROM tour_schedules WHERE id = $1 LIMIT 1`, [tourId]);
         const tour = res.rows[0];
