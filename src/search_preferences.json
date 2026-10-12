@@ -6,5 +6,9 @@
     { "name": "Hell's Kitchen", "area": "Manhattan", "aliases": ["Hells Kitchen", "Clinton"] },
     { "name": "Williamsburg", "area": "Brooklyn", "aliases": [] }
   ],
-  "includedAreas": ["Queens", "Brooklyn", "Jersey City", "Hoboken"]
+  "includedAreas": ["Queens", "Brooklyn", "Jersey City", "Hoboken"],
+  "includedAreaCommute": {
+    "maxMinutes": 20,
+    "destination": "any Manhattan arrival station"
+  }
 }

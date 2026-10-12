@@ -68,6 +68,9 @@ async function notifyHighScoringListings() {
             ? `\n🚇 <b>Commute to 620 8th Ave:</b> ${esc(listing.commute_summary)}`
             : (listing.commute_minutes ? `\n🚇 <b>Commute to 620 8th Ave:</b> ~${listing.commute_minutes} mins` : "");
 
+        const manhattanCommute = listing.manhattan_commute_summary
+            ? '\n🚉 <b>AI estimate to Manhattan:</b> ' + listing.manhattan_commute_minutes + ' min to ' + esc(listing.manhattan_arrival_station) + ' — ' + esc(listing.manhattan_commute_summary) : '';
+
         let buildingHealthBadge = "";
         try {
             if (listing.building_health) {
@@ -85,6 +88,7 @@ async function notifyHighScoringListings() {
                         `${neighborhoodTag}` +
                         `${sourceBadge}` +
                         `${commuteInfo}` +
+                        manhattanCommute +
                         `${buildingHealthBadge}\n` +
                         `⚠️ <b>Broker Fee:</b> ${feeText}\n\n` +
                         `🚩 <b>Red Flags:</b> ${esc(redFlags || "None")}\n` +

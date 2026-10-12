@@ -111,7 +111,7 @@ function App() {
     ? listings
     : filterNeighborhood === 'preferred'
       ? listings.filter(l => l.is_preferred === true || l.is_preferred === 1)
-      : listings.filter(l => (l.neighborhood || '').toLowerCase().includes(filterNeighborhood.toLowerCase()) || l.location_area === filterNeighborhood);
+      : listings.filter(l => (l.is_preferred === true || l.is_preferred === 1) && ((l.neighborhood || '').toLowerCase().includes(filterNeighborhood.toLowerCase()) || l.location_area === filterNeighborhood));
 
   const inbox = filteredListings.filter(l => l.status === 'inbox');
   const applied = filteredListings.filter(l => l.status === 'applied');
@@ -223,7 +223,7 @@ function App() {
                   <option key={n.name} value={n.name}>{n.name} (⭐ Preferred)</option>
                 ))}
                 {preferences?.includedAreas?.map(area => (
-                  <option key={area} value={area}>{area} (Included)</option>
+                  <option key={area} value={area}>{area} (≤{preferences.includedAreaCommute.maxMinutes}m to Manhattan)</option>
                 ))}
               </select>
             </div>
@@ -403,6 +403,12 @@ function ListingCard({ l, onPass, onApply }) {
           <Bath className="w-3.5 h-3.5 text-slate-400" /> {l.bathrooms} Bath
         </div>
       </div>
+
+      {l.manhattan_commute_summary && (
+        <div className="mb-2.5 p-2 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs font-medium text-indigo-900">
+          <b>AI estimate to Manhattan · {l.manhattan_commute_minutes}m to {l.manhattan_arrival_station}:</b> {l.manhattan_commute_summary}
+        </div>
+      )}
 
       {/* COMMUTE ROUTE TO DATADOG */}
       {l.commute_summary && (

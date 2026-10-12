@@ -51,7 +51,9 @@ Unknown building health is displayed as unverified. Failed AI evaluations remain
 
 ## Saved search locations
 
-`src/search_preferences.json` is the durable source of truth for location preferences, loaded each cycle/request and included in Docker images with `src/`. Preferred neighborhoods: Lower East Side, Financial District, East Village, Hell's Kitchen, and Williamsburg. Also included borough/city-wide: Queens, Brooklyn, Jersey City, and Hoboken.
+`src/search_preferences.json` is the durable source of truth for location preferences, loaded each cycle/request and included in Docker images with `src/`. Preferred Manhattan neighborhoods: Lower East Side, Financial District, East Village, and Hell's Kitchen. Williamsburg is also saved. Listings in Queens, Brooklyn (including Williamsburg), Jersey City, and Hoboken qualify only with an estimated public-transit commute of at most 20 minutes from the apartment to any Manhattan arrival station, including walking, typical waits, and transfers. This is separate from the office commute to 620 8th Ave.
+
+The evaluator stores a separate Manhattan-arrival time, station, and route. Unknown/missing estimates or routes fail the regional preference check, including older listings until they are re-evaluated. The cutoff is enforced after score bonuses, again before notifications, and in the dashboard's saved-search filter. Location and commute extraction still use AI estimates, not independently verified geocoding or live transit routing.
 
 Scrapers collect regional candidates; the evaluator verifies their borough/city, and alerts enforce the saved locations regardless of score bonuses. The dashboard defaults to saved search areas and remembers its display filter independently. Historical listings are retained under All collected listings. Budgets and the commute destination are unchanged. StreetEasy and Compass cover all five regions; RentHop covers Manhattan, Brooklyn, Queens, and Jersey City. Unknown locations cannot trigger an alert. NYC building-health checks use the actual borough; New Jersey health stays unverified.
 

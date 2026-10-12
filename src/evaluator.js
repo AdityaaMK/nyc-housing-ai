@@ -45,6 +45,9 @@ async function runAIEvaluation(listing, description) {
     - "is_preferred_neighborhood": (boolean) true only if the property matches the saved search areas above.
     - "commute_minutes": (number) estimated door-to-door morning commute time in minutes to ${targetOffice} (including walking to nearest subway + train ride + walk to 620 8th Ave).
     - "commute_summary": (string) concise door-to-door transit route, e.g. "18 mins: 4 min walk to A/C/E @ 14th St -> 8 min ride to 42 St-Port Authority (direct exit into 620 8th Ave)".
+    - "manhattan_commute_minutes": (number or null) SEPARATE estimate from this apartment to the first arrival station in Manhattan by public transit on a typical weekday morning. Include walking to the origin station, typical waiting, in-vehicle time, and transfers. Do not use only train time, the office commute, or a neighborhood-wide best case. Use null if the property location or route cannot be reasonably established, or the apartment is already in Manhattan.
+    - "manhattan_arrival_station": (string or null) name of that arrival station, which must be in Manhattan. Null if unknown/not applicable.
+    - "manhattan_commute_summary": (string or null) describe the walk, transit line, waits/transfers, and Manhattan arrival station supporting the separate estimate. These are estimates, not verified live routing. Null if unknown/not applicable.
     - "true_gross_rent": (number) calculate actual monthly rent. If net effective / concessions mentioned, compute actual monthly gross check. If not, use advertised price.
     - "is_fee": (boolean) true if broker fee mentioned, tenant pays fee, or 15%. False if explicitly no fee.
     - "fee_estimate": (string) e.g., "15% of annual", "1 month rent", or "None".
@@ -161,7 +164,7 @@ async function evaluateListings() {
             const idHash = crypto.createHash("md5").update(listing.id).digest("hex");
 
             await pool.query(
-                `UPDATE listings SET price = $1, is_evaluated = true, true_gross_rent = $2, is_fee = $3, fee_estimate = $4, red_flags = $5, pros = $6, suitability_score = $7, neighborhood = $8, is_preferred = $9, id_hash = $10, commute_minutes = $11, commute_summary = $12, building_health = $13, location_area = $14 WHERE id = $15`,
+                `UPDATE listings SET price = $1, is_evaluated = true, true_gross_rent = $2, is_fee = $3, fee_estimate = $4, red_flags = $5, pros = $6, suitability_score = $7, neighborhood = $8, is_preferred = $9, id_hash = $10, commute_minutes = $11, commute_summary = $12, building_health = $13, location_area = $14, manhattan_commute_minutes = $15, manhattan_arrival_station = $16, manhattan_commute_summary = $17 WHERE id = $18`,
                 [
                     listing.price,
                     evaluation.true_gross_rent || listing.price || 0, 
@@ -177,6 +180,9 @@ async function evaluateListings() {
                     evaluation.commute_summary || null,
                     JSON.stringify(health || {}),
                     evaluation.location_area,
+                    evaluation.manhattan_commute_minutes,
+                    evaluation.manhattan_arrival_station,
+                    evaluation.manhattan_commute_summary,
                     listing.id
                 ]
             );
