@@ -1,3 +1,4 @@
+const { repository } = require('./repository');
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const { initDB, pool } = require("./db");
@@ -60,13 +61,11 @@ async function scrapeStreetEasyFeed(browser) {
                                         continue;
                                     }
 
-                                    const res = await pool.query(`SELECT id FROM listings WHERE id = $1`, [id]);
+                                    const res = await repository.listingExists(id);
                                     
                                     if (res.rows.length === 0) {
-                                        await pool.query(
-                                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address, location_area) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                                            [id, url, title, price, bedrooms, bathrooms, "streeteasy", normalizedAddress, feed.area]
-                                        );
+                                        const inserted = await repository.insertListing({ id, url, title, price, bedrooms, bathrooms, source: "streeteasy", normalized_address: normalizedAddress, location_area: feed.area });
+                        if (!inserted.rowCount) continue;
                                         console.log(`🎉 NEW CANDIDATE [StreetEasy]: ${title} | $${price || "?"} | ${bedrooms} Bed / ${bathrooms} Bath | Key: ${normalizedAddress}`);
                                         totalNew++;
                                     }

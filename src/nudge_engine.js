@@ -1,5 +1,5 @@
+const { repository } = require('./repository');
 require("dotenv").config();
-const { pool } = require("./db");
 const { sendBrokerEmail } = require("./mailer");
 const { Api } = require("node-telegram-bot-api");
 const crypto = require("crypto");
@@ -43,33 +43,7 @@ async function checkPendingNudges(botApi, chatId) {
 
     try {
         // Find listings applied 24+ hours ago with no response, broker email known, not yet nudged
-        let res;
-        try {
-            res = await pool.query(`
-                SELECT * FROM listings 
-                WHERE status = 'applied'
-                  AND broker_email IS NOT NULL
-                  AND (nudge_notified IS NULL OR nudge_notified = false)
-                  AND (nudge_count IS NULL OR nudge_count = 0)
-                  AND applied_at IS NOT NULL
-                  AND applied_at <= NOW() - INTERVAL '24 HOURS'
-                LIMIT 5
-            `);
-        } catch(e) {
-            // Fallback SQLite datetime syntax if needed
-            res = await pool.query(`
-                SELECT * FROM listings 
-                WHERE status = 'applied'
-                  AND broker_email IS NOT NULL
-                  AND (nudge_notified IS NULL OR nudge_notified = 0)
-                  AND (nudge_count IS NULL OR nudge_count = 0)
-                  AND applied_at IS NOT NULL
-                  AND applied_at <= datetime('now', '-24 hours')
-                LIMIT 5
-            `);
-        }
-
-        const pending = res ? res.rows : [];
+        const { rows: pending } = await repository.pendingNudges();
         if (pending.length === 0) return;
 
         console.log(`⏰ [Nudge Engine] Found ${pending.length} listing(s) pending broker follow-up.`);
@@ -97,7 +71,7 @@ async function checkPendingNudges(botApi, chatId) {
             });
 
             // Mark nudge_notified = true so we don't duplicate notifications
-            await pool.query(`UPDATE listings SET nudge_notified = true WHERE id = $1`, [listing.id]);
+            await repository.markNudgeNotified(listing.id);
             console.log(`📱 Dispatched nudge prompt for: ${listing.title} to broker ${listing.broker_email}`);
         }
     } catch (err) {
@@ -107,10 +81,7 @@ async function checkPendingNudges(botApi, chatId) {
 
 async function sendNudge(actionId) {
     try {
-        const res = await pool.query(
-            `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 LIMIT 1`,
-            [actionId]
-        );
+        const res = await repository.getListing(actionId);
         const listing = res.rows[0];
         if (!listing) return { success: false, reason: "Listing not found in database." };
 
@@ -128,10 +99,7 @@ async function sendNudge(actionId) {
             body
         });
 
-        await pool.query(
-            `UPDATE listings SET nudged_at = CURRENT_TIMESTAMP, nudge_count = COALESCE(nudge_count, 0) + 1 WHERE id = $1`,
-            [listing.id]
-        );
+        await repository.recordNudge(listing.id);
 
         console.log(`✅ [Nudge Engine] Follow-up sent to ${brokerEmail} for "${listing.title}"`);
         return { success: true, listing, recipient: brokerEmail };
@@ -143,10 +111,7 @@ async function sendNudge(actionId) {
 
 async function skipNudge(actionId) {
     try {
-        await pool.query(
-            `UPDATE listings SET nudge_count = 1 WHERE id = $1 OR id_hash = $1`,
-            [actionId]
-        );
+        await repository.skipNudge(actionId);
         return { success: true };
     } catch (err) {
         return { success: false, reason: err.message };

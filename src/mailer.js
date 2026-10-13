@@ -1,9 +1,14 @@
 require("dotenv").config();
 const nodemailer = require("nodemailer");
+const { mailBackend, required } = require('./backend_config');
 
 let transporter = null;
 
 function getTransporter() {
+    if (mailBackend() === 'gmail-api') {
+        return { sendMail: options => require('./gmail_api').getGmailClient().send(options) };
+    }
+    required(process.env, ['GMAIL_USER', 'GMAIL_APP_PASSWORD'], 'smtp-imap');
     if (!transporter) {
         transporter = nodemailer.createTransport({
             service: "gmail",
@@ -90,10 +95,10 @@ async function extractAgentContact(listing, page) {
 async function sendBrokerEmail({ to, subject, body }) {
     const transport = getTransporter();
     const senderName = process.env.TENANT_NAME || "Adityaa Magesh Kumar";
-    const senderEmail = process.env.GMAIL_USER || "adityaa.magesh@gmail.com";
+    const senderEmail = mailBackend() === 'gmail-api' ? require('./gmail_api').getGmailClient().user : process.env.GMAIL_USER;
 
     const mailOptions = {
-        from: `"${senderName}" <${senderEmail}>`,
+        from: { name: senderName, address: senderEmail },
         to: to,
         replyTo: senderEmail,
         bcc: senderEmail, // Keep a copy in your own inbox for tracking

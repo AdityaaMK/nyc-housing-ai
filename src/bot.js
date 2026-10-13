@@ -1,7 +1,8 @@
+const { repository } = require('./repository');
 require("dotenv").config();
 const { Bot } = require("node-telegram-bot-api");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { pool, initDB } = require("./db");
+const { initDB } = require("./db");
 const { submitInquiry } = require("./auto_inquire");
 const { confirmTourBooking } = require("./inbound_listener");
 const { sendNudge, skipNudge } = require("./nudge_engine");
@@ -107,10 +108,7 @@ function setupBotHandlers(botInstance) {
         if (callbackData.startsWith("pass_")) {
             const actionId = callbackData.replace("pass_", "");
             try {
-                await pool.query(
-                    `UPDATE listings SET status = 'passed' WHERE id = $1 OR id_hash = $1`,
-                    [actionId]
-                );
+                await repository.passListing(actionId);
                 await ctx.answerCallbackQuery({ text: "❌ Passed! Saved to your passed list." });
                 await ctx.reply("❌ <i>Marked listing as passed. It won't be recommended again.</i>", {
                     parse_mode: "HTML"
@@ -124,10 +122,7 @@ function setupBotHandlers(botInstance) {
             try {
                 await ctx.answerCallbackQuery({ text: "✍️ Generating customized Intro Packet..." });
 
-                const res = await pool.query(
-                    `SELECT * FROM listings WHERE id = $1 OR id_hash = $1 LIMIT 1`,
-                    [actionId]
-                );
+                const res = await repository.getListing(actionId);
                 const listing = res.rows[0];
 
                 if (!listing) {
@@ -142,17 +137,11 @@ function setupBotHandlers(botInstance) {
                 const autoResult = await submitInquiry(listing, introPacket);
 
                 if (autoResult?.success) {
-                    await pool.query(
-                        `UPDATE listings SET status = 'applied', applied_at = CURRENT_TIMESTAMP WHERE id = $1 OR id_hash = $1`,
-                        [actionId]
-                    );
+                    await repository.markApplied(actionId);
                 }
 
                 if (autoResult && autoResult.recipient) {
-                    await pool.query(
-                        `UPDATE listings SET broker_email = $1 WHERE id = $2 OR id_hash = $2`,
-                        [autoResult.recipient, actionId]
-                    );
+                    await repository.setBrokerEmail(actionId, autoResult.recipient);
                 }
 
                 let statusBadge = "";

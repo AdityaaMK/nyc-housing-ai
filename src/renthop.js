@@ -1,3 +1,4 @@
+const { repository } = require('./repository');
 const { pool } = require("./db");
 const { normalizeAddress, checkOrRecordDuplicate } = require("./normalizer");
 
@@ -103,12 +104,10 @@ async function scrapeRentHop(browser) {
                     }
 
                     // Check if already in DB by ID
-                    const existingById = await pool.query(`SELECT id FROM listings WHERE id = $1`, [id]);
+                    const existingById = await repository.listingExists(id);
                     if (existingById.rows.length === 0) {
-                        await pool.query(
-                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address, location_area) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                            [id, url, displayTitle, price, beds, baths, "renthop", normalizedAddress, feed.area]
-                        );
+                        const inserted = await repository.insertListing({ id, url, title: displayTitle, price, bedrooms: beds, bathrooms: baths, source: "renthop", normalized_address: normalizedAddress, location_area: feed.area });
+                        if (!inserted.rowCount) continue;
                         console.log(`🎉 NEW CANDIDATE [RentHop]: ${displayTitle} | $${price || "?"} | ${beds} Bed / ${baths} Bath | Key: ${normalizedAddress}`);
                         totalNew++;
                     }

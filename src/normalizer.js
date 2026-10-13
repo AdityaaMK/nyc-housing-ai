@@ -14,17 +14,7 @@ function normalizeAddress(title, rawAddress) {
     return unit ? `${text}-${unit}` : null;
 }
 
-async function checkOrRecordDuplicate(pool, { normalizedAddress, newUrl, newSource }) {
-    if (!normalizedAddress) return null;
-    const { rows } = await pool.query('SELECT id, source, url, cross_posted_sources, is_evaluated, is_notified FROM listings WHERE normalized_address = $1 LIMIT 1', [normalizedAddress]);
-    const existing = rows[0];
-    if (!existing || existing.url === newUrl) return existing || null;
-    let sources = [];
-    try { sources = JSON.parse(existing.cross_posted_sources || '[]'); } catch {}
-    if (!sources.some(source => source.url === newUrl)) {
-        sources.push({ source: newSource, url: newUrl, discovered_at: new Date().toISOString() });
-        await pool.query('UPDATE listings SET cross_posted_sources = $1 WHERE id = $2', [JSON.stringify(sources), existing.id]);
-    }
-    return existing;
+async function checkOrRecordDuplicate(pool, input) {
+    return require('./repository').createRepository(pool).recordDuplicate(input);
 }
 module.exports = { normalizeAddress, checkOrRecordDuplicate };

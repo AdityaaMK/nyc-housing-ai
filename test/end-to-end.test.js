@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 process.env.DATABASE_URL = '';
+process.env.DB_BACKEND = 'sqlite';
+delete process.env.MAIL_BACKEND; // Fixture IMAP/SMTP, including legacy best-effort polling.
+delete process.env.GMAIL_CREDENTIALS_FILE;
 process.env.SQLITE_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'housing-e2e-')), 'test.db');
 process.env.GEMINI_API_KEY = 'fixture';
 process.env.TELEGRAM_BOT_TOKEN = 'fixture';
@@ -36,7 +39,7 @@ mock('@google/generative-ai', { GoogleGenerativeAI: class { getGenerativeModel()
  return { response: { text: () => JSON.stringify(data) } };
  } }; } } });
 mock('imap-simple', { connect: async () => ({
- imap: { _box: { uidvalidity: 123 } }, async openBox() {}, async search() { return [{ attributes: { uid: 42 }, parts: [{ which: 'HEADER', body: { subject: ['Apartment tour'], from: ['Broker <broker@example.test>'] } }, { which: 'TEXT', body: 'Tour offered October 20 at 5:30 PM' }] }]; }, async addFlags(uid) { flags.push(uid); }, end() {}
+ imap: { _box: { uidvalidity: 123 } }, async openBox() {}, async search() { return [{ attributes: { uid: 42 }, parts: [{ which: '', body: 'Subject: Apartment tour\r\nFrom: Broker <broker@example.test>\r\nDate: Mon, 12 Oct 2026 12:00:00 -0400\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nTour offered October 20 at 5:30 PM' }] }]; }, async addFlags(uid) { flags.push(uid); }, end() {}
 }) });
 const { initDB, pool } = require('../src/db');
 const app = require('../src/server');

@@ -97,6 +97,7 @@ test('notifier rejects high-scoring Harlem while allowing Williamsburg, Queens, 
     } finally {
         for (const [id, old] of originals) { if (old) require.cache[id] = old; else delete require.cache[id]; }
         delete require.cache[require.resolve('../src/notifier')];
+        delete require.cache[require.resolve('../src/repository')];
         if (oldToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = oldToken;
         if (oldChat === undefined) delete process.env.TELEGRAM_CHAT_ID; else process.env.TELEGRAM_CHAT_ID = oldChat;
     }
@@ -161,6 +162,7 @@ test('dashboard API serves saved preferences and recalculates stale location fla
     } finally {
         for (const [id, old] of originals) { if (old) require.cache[id] = old; else delete require.cache[id]; }
         delete require.cache[require.resolve('../src/server')];
+        delete require.cache[require.resolve('../src/repository')];
     }
 });
 
