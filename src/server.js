@@ -2,7 +2,10 @@ const { repository } = require('./repository');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { initDB } = require('./db');
+const { initDB, pool } = require('./db');
+const { createAllowance } = require('./commute_allowance');
+const { createCommuteService, commuteOrigin } = require('./google_commute');
+const { installCommuteApi } = require('./commute_api');
 const { publicError } = require('./evaluation_errors');
 const { commuteMapsUrl } = require('./commute_links');
 const { confirmTourBooking, generateGoogleCalendarUrl } = require('./inbound_listener');
@@ -12,6 +15,7 @@ const { loadPreferences, matchesLocation, locationArea } = require('./preference
 const app = express();
 app.use(cors());
 app.use(express.json());
+installCommuteApi(app, { repository, service: createCommuteService({ allowance: createAllowance(pool) }) });
 
 app.get('/api/preferences', (req, res) => {
     try { res.json(loadPreferences()); }
@@ -25,7 +29,7 @@ app.get('/api/listings', async (req, res) => {
         const preferences = loadPreferences();
         res.json(result.rows.map(row => {
             const { evaluation_claim_token, evaluation_claim_expires_at, ...listing } = row;
-            return { ...listing, commute_maps_url: commuteMapsUrl(listing), evaluation_last_error: publicError(listing.evaluation_last_error),
+            return { ...listing, commute_address_available: Boolean(commuteOrigin(listing)), commute_maps_url: commuteMapsUrl(listing), evaluation_last_error: publicError(listing.evaluation_last_error),
                 location_area: locationArea(listing, preferences), is_preferred: matchesLocation(listing, preferences) };
         }));
     } catch (err) {
@@ -146,6 +150,9 @@ app.get('/api/stats', async (req, res) => {
         res.status(500).json({ error: 'Failed to compute stats' });
     }
 });
+
+// Serve the built dashboard from the existing API process when a build is present.
+app.use(express.static(require('node:path').resolve(__dirname, '../web/dist')));
 
 const PORT = process.env.PORT || 3001;
 
