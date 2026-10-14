@@ -47,7 +47,14 @@ function createHttpsClient({ fetchImpl = fetch, dispatcher, timeoutMs = 30000 } 
                     dispatcher: agent, redirect: 'error', signal: controller.signal });
                 if (!response.ok) {
                     await response.body?.cancel();
-                    throw new HttpsError(service, 'request rejected', response.status);
+                    const error = new HttpsError(service, 'request rejected', response.status);
+                    // Preserve only a parsed retry interval, never provider bodies or headers.
+                    const retry = response.headers.get('retry-after');
+                    if (retry) {
+                        const ms = /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+                        if (Number.isFinite(ms) && ms > 0) error.retryAfterMs = ms;
+                    }
+                    throw error;
                 }
                 const body = await response.text();
                 return { data: body ? JSON.parse(body) : null, headers: response.headers, status: response.status };

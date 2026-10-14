@@ -45,7 +45,7 @@ Configure `.env` with `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - `npm run lint --prefix web`: check dashboard source.
 - `npm run dashboard`: start the API and development dashboard.
 
-The dashboard uses `http://localhost:3001` by default; set `VITE_API_URL` at build time for another API origin. The daemon (`npm start` or `npm run daemon`) performs live external operations and requires the configured services.
+The development dashboard uses `http://localhost:3001` by default. The API serves the built dashboard at its root, with same-origin API requests; set `VITE_API_URL` at build time for another API origin. The daemon (`npm start` or `npm run daemon`) performs live external operations and requires the configured services.
 
 Unknown building health is displayed as unverified. Failed AI evaluations enter the durable retry queue, failed notifications remain eligible for retry, and tours without a precise date/time do not receive an invented calendar time. Historical tours need a `proposed_datetime` value before a calendar link can be offered. Conservative apartment deduplication requires a house number and unit; listings with incomplete addresses may appear separately.
 
@@ -91,7 +91,7 @@ Budget checks use net effective rent over the initial lease: `(gross rent × (le
 
 Commute routes remain unverified AI estimates, and listing pages can change prices between collection and evaluation. No additional scoring requests were made to investigate these findings.
 
-Listing cards with a usable street address and known borough/city provide a “Check office commute in Google Maps” transit link. It uses `TARGET_COMMUTE_ADDRESS` (default: 620 8th Avenue, New York) and requires no Maps API key. Confirm the origin and set a weekday arrival time in Maps. Opening the link does not automatically verify the saved AI estimate or change the listing's score. Automatic transit lookups are not configured.
+Listing cards with a usable street address and known borough/city provide a “Check office commute in Google Maps” transit link. It uses `TARGET_COMMUTE_ADDRESS` (default: 620 8th Avenue, New York) and requires no Maps API key. Confirm the origin and set a weekday arrival time in Maps. Opening the link does not automatically verify the saved AI estimate or change the listing's score. The optional **Get Google commute** button requests a Google Maps transit estimate arriving at 9:00 AM next weekday, only when clicked. It requires a private `GOOGLE_MAPS_API_KEY`, keeps results in page memory, and caps attempted requests at 300 per New York day and 9,000 per rolling 32 days. Saved scores and AI estimates stay unchanged. See [setup, migration, usage controls and tests](docs/google-commute.md).
 
 ## HTTPS cloud backends
 

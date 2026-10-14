@@ -1,3 +1,4 @@
+import { GoogleCommute, GoogleCommuteProvider } from './GoogleCommute';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Building,
@@ -20,7 +21,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 
-const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 async function requestApi(path, options) {
   const response = await fetch(apiBase + path, options);
   const data = await response.json();
@@ -474,6 +475,8 @@ function ListingCard({ l, onPass, onApply }) {
         <div className="mt-1 text-slate-500">Confirm the address and choose a weekday arrival time in Maps.</div>
       </div>}
 
+      <GoogleCommute listing={l} />
+
       {/* BUILDING HEALTH BADGE */}
       {health && (
         <div className="mb-3">
@@ -796,4 +799,6 @@ function CommuteMapView({ listings }) {
   );
 }
 
-export default App;
+export default function Dashboard() {
+  return <GoogleCommuteProvider><App /></GoogleCommuteProvider>;
+}
