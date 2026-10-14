@@ -1,3 +1,4 @@
+const { repository } = require('./repository');
 const { pool } = require("./db");
 const { normalizeAddress, checkOrRecordDuplicate } = require("./normalizer");
 
@@ -114,13 +115,10 @@ async function scrapeCompass(browser) {
                     }
 
                     // Check if already in DB
-                    const existingById = await pool.query(`SELECT id FROM listings WHERE id = $1`, [compId]);
+                    const existingById = await repository.listingExists(compId);
                     if (existingById.rows.length === 0) {
-                        await pool.query(
-                            `INSERT INTO listings (id, url, title, price, bedrooms, bathrooms, source, normalized_address, neighborhood, location_area)
-                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-                            [compId, url, item.title, price, beds, baths, "compass", normalizedAddress, neighborhood, feed.area]
-                        );
+                        const inserted = await repository.insertListing({ id: compId, url, title: item.title, price, bedrooms: beds, bathrooms: baths, source: "compass", normalized_address: normalizedAddress, neighborhood, location_area: feed.area });
+                        if (!inserted.rowCount) continue;
                         console.log(`🎉 NEW CANDIDATE [Compass]: ${item.title} | $${price || "?"} | ${beds} Bed / ${baths} Bath | ${neighborhood}`);
                         totalNew++;
                     }

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { GoogleCommute, GoogleCommuteProvider } from './GoogleCommute';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Building,
   DollarSign,
@@ -20,7 +21,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 
-const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 async function requestApi(path, options) {
   const response = await fetch(apiBase + path, options);
   const data = await response.json();
@@ -45,30 +46,44 @@ function App() {
     try { localStorage.setItem('housing-neighborhood-filter', filterNeighborhood); } catch { /* Storage can be disabled. */ }
   }, [filterNeighborhood]);
 
-  useEffect(() => {
-    fetchAllData();
+  const refreshRef = useRef(null);
+  const fetchAllData = useCallback(async () => {
+    if (refreshRef.current) return;
+    const controller = new AbortController();
+    refreshRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const options = { signal: controller.signal };
+      const [listRes, tourRes, statRes, prefRes] = await Promise.all([
+        requestApi('/api/listings', options), requestApi('/api/tours', options),
+        requestApi('/api/stats', options), requestApi('/api/preferences', options)
+      ]);
+      if (!Array.isArray(listRes) || !Array.isArray(tourRes) || !statRes || !prefRes) throw new Error('Invalid dashboard response');
+      if (refreshRef.current !== controller) return;
+      setListings(listRes); setTours(tourRes); setStats(statRes); setPreferences(prefRes);
+      setError('');
+    } catch (err) {
+      controller.abort();
+      // Retain the last successful snapshot on partial/network failures.
+      if (refreshRef.current === controller) setError(err.name === 'AbortError' ? 'Refresh timed out. Showing previous results.' : err.message);
+    } finally {
+      clearTimeout(timeout);
+      if (refreshRef.current === controller) { refreshRef.current = null; setLoading(false); }
+    }
   }, []);
 
-  async function fetchAllData() {
-    try {
-      setError('');
-      const [listRes, tourRes, statRes, prefRes] = await Promise.all([
-        requestApi('/api/listings'),
-        requestApi('/api/tours'),
-        requestApi('/api/stats'),
-        requestApi('/api/preferences')
-      ]);
-      setListings(Array.isArray(listRes) ? listRes : []);
-      setTours(Array.isArray(tourRes) ? tourRes : []);
-      setStats(statRes);
-      setPreferences(prefRes);
-      setLoading(false);
-    } catch (err) {
-      console.error(err);
-      setError(err.message);
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const refreshVisible = () => { if (!document.hidden) void fetchAllData(); };
+    refreshVisible();
+    const timer = setInterval(refreshVisible, 15000);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      refreshRef.current?.abort();
+      refreshRef.current = null;
+    };
+  }, [fetchAllData]);
 
   const updateStatus = async (id, status) => {
     try {
@@ -166,6 +181,16 @@ function App() {
             </div>
           </div>
         </header>
+
+        <section aria-label="Evaluation progress" className="mb-6 grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {Object.entries({ pending: 'Pending', processing: 'Processing', completed: 'Scored', retry_wait: 'Retrying', failed: 'Failed' }).map(([state, label]) => (
+            <div key={state} className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
+              <div className="text-xs font-bold text-slate-500">{label}</div>
+              <div className="text-2xl font-black text-slate-800">{stats?.evaluation?.[state] ?? '—'}</div>
+            </div>
+          ))}
+          <p className="col-span-2 sm:col-span-5 text-xs text-slate-500">All collected listings · Refreshes every 15 seconds while visible. Passed listings are excluded from scoring.</p>
+        </section>
 
         {/* NAVIGATION TABS & FILTER BAR */}
         <div className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white/70 backdrop-blur-md p-2 rounded-2xl border border-slate-200/60 shadow-sm">
@@ -326,6 +351,12 @@ function PipelineColumn({ title, count, listings, theme, onPass, onApply }) {
 }
 
 function ListingCard({ l, onPass, onApply }) {
+  let rentTerms = null;
+  try { rentTerms = typeof l.rent_terms === 'string' ? JSON.parse(l.rent_terms) : l.rent_terms; } catch {}
+  const effectiveRent = l.effective_monthly_rent;
+  const grossRent = rentTerms?.gross_monthly_rent ?? l.true_gross_rent;
+  const shownRent = effectiveRent ?? l.price ?? grossRent;
+  const money = value => Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 });
   let redFlags = [];
   let pros = [];
   try { redFlags = JSON.parse(l.red_flags || '[]'); } catch {}
@@ -347,7 +378,7 @@ function ListingCard({ l, onPass, onApply }) {
 
   // Score Badge Color
   const getScoreColor = (score) => {
-    if (!score) return 'from-slate-400 to-slate-500';
+    if (score == null) return 'from-slate-400 to-slate-500';
     if (score >= 85) return 'from-emerald-500 to-teal-600 shadow-emerald-200';
     if (score >= 70) return 'from-amber-400 to-orange-500 shadow-amber-200';
     return 'from-rose-500 to-red-600 shadow-rose-200';
@@ -367,7 +398,7 @@ function ListingCard({ l, onPass, onApply }) {
       {/* Floating Score Badge */}
       <div className={`absolute -top-3 -right-2 bg-gradient-to-br text-white font-black px-3 py-1 rounded-xl shadow-md border-2 border-white flex items-center gap-1 ${getScoreColor(l.suitability_score)}`}>
         <span className="text-[9px] uppercase tracking-wider opacity-90 mr-0.5">Score</span>
-        <span className="text-sm">{l.suitability_score || '?'}</span>
+        <span className="text-sm">{l.suitability_score ?? '?'}</span>
       </div>
 
       {/* Source & Neighborhood Line */}
@@ -387,14 +418,20 @@ function ListingCard({ l, onPass, onApply }) {
         {l.title}
       </h3>
 
+      <div className="mb-3 text-xs text-slate-600" aria-label="Evaluation status">
+        <span className="font-bold">Evaluation: {({ pending: 'Pending', processing: 'Processing', completed: 'Scored', retry_wait: 'Retrying', failed: 'Failed' })[l.evaluation_status] || 'Pending'}</span>
+        {l.evaluation_attempts > 0 && <span> · {l.evaluation_attempts}/3 attempts</span>}
+        {l.evaluation_status === 'retry_wait' && l.evaluation_next_at && <div>Eligible after {new Date(l.evaluation_next_at).toLocaleString()}</div>}
+        {l.evaluation_completed_at && <div>Scored {new Date(l.evaluation_completed_at).toLocaleString()}</div>}
+        {l.evaluation_last_error && <div className="text-amber-800">{l.evaluation_last_error}</div>}
+      </div>
+
       {/* Quick Stats Bar */}
       <div className="flex flex-wrap gap-2 text-xs font-bold text-slate-700 bg-slate-50/90 p-2.5 rounded-xl border border-slate-100 mb-3">
         <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-md shadow-xs border border-slate-100">
           <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-          <span className="text-sm font-black">${Number(l.true_gross_rent || l.price || 0).toLocaleString()}</span>
-          {l.true_gross_rent && l.true_gross_rent !== l.price && (
-            <span className="text-[10px] text-slate-400 font-normal">(${Number(l.price).toLocaleString()} net)</span>
-          )}
+          <span className="text-sm font-black">{shownRent != null ? `$${money(shownRent)}` : 'Rent unknown'}</span>
+          {shownRent != null && <span className="text-[10px] text-slate-500 font-normal">{effectiveRent != null ? 'net effective /mo' : l.price != null ? 'advertised /mo' : 'gross /mo'}</span>}
         </div>
         <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-md shadow-xs border border-slate-100">
           <Bed className="w-3.5 h-3.5 text-slate-400" /> {l.bedrooms === 0 ? 'Studio' : `${l.bedrooms} Bed`}
@@ -403,6 +440,16 @@ function ListingCard({ l, onPass, onApply }) {
           <Bath className="w-3.5 h-3.5 text-slate-400" /> {l.bathrooms} Bath
         </div>
       </div>
+
+      {grossRent != null && <div className="mb-3 text-xs text-slate-600">
+        <div>Gross monthly rent: ${money(grossRent)}</div>
+        {rentTerms?.concessions_mentioned && effectiveRent != null && <div>
+          {rentTerms.free_months > 0 && `${rentTerms.free_months} months free · `}
+          {rentTerms.rent_credit > 0 && `$${money(rentTerms.rent_credit)} additional rent credit · `}
+          Averaged over {rentTerms.lease_months} months
+        </div>}
+        {rentTerms?.concessions_mentioned && effectiveRent == null && <div>Concession terms incomplete; lease average unverified.</div>}
+      </div>}
 
       {l.manhattan_commute_summary && (
         <div className="mb-2.5 p-2 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs font-medium text-indigo-900">
@@ -415,10 +462,20 @@ function ListingCard({ l, onPass, onApply }) {
         <div className="mb-2.5 p-2 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs font-medium text-indigo-900 flex items-center gap-2">
           <Navigation className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
           <span className="truncate">
-            <b>{l.commute_minutes ? `${l.commute_minutes}m:` : 'Commute:'}</b> {l.commute_summary}
+            <b>AI commute estimate (unverified) · {l.commute_minutes != null ? `${l.commute_minutes}m:` : 'Commute:'}</b> {l.commute_summary}
           </span>
         </div>
       )}
+
+      {l.commute_maps_url && <div className="mb-3 text-xs">
+        <a href={l.commute_maps_url} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-bold text-indigo-700 hover:underline">
+          <Navigation className="w-3.5 h-3.5" /> Check office commute in Google Maps <ExternalLink className="w-3 h-3" />
+        </a>
+        <div className="mt-1 text-slate-500">Confirm the address and choose a weekday arrival time in Maps.</div>
+      </div>}
+
+      <GoogleCommute listing={l} />
 
       {/* BUILDING HEALTH BADGE */}
       {health && (
@@ -448,11 +505,11 @@ function ListingCard({ l, onPass, onApply }) {
           <div className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200/60 px-2 py-0.5 rounded-md">
             <TriangleAlert className="w-3 h-3" /> Fee: {l.fee_estimate || 'Yes'}
           </div>
-        ) : (
+        ) : l.evaluation_status === 'completed' ? (
           <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
             <Sparkles className="w-3 h-3 text-emerald-600" /> No Fee
           </div>
-        )}
+        ) : null}
 
         {redFlags.slice(0, 2).map((rf, i) => (
           <div key={`rf-${i}`} className="flex items-center gap-1 text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-md">
@@ -724,7 +781,7 @@ function CommuteMapView({ listings }) {
 
               <div className="text-xs font-bold text-slate-800 mb-1 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-blue-600" />
-                <span>Commute: {nh.commute}</span>
+                <span>AI commute estimate: {nh.commute}</span>
               </div>
 
               <div className="text-xs text-slate-600 mb-2">
@@ -742,4 +799,6 @@ function CommuteMapView({ listings }) {
   );
 }
 
-export default App;
+export default function Dashboard() {
+  return <GoogleCommuteProvider><App /></GoogleCommuteProvider>;
+}

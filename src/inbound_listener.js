@@ -1,22 +1,12 @@
+const { repository } = require('./repository');
 require("dotenv").config();
-const imaps = require("imap-simple");
+const { openMailbox } = require('./mailbox');
+const { mailBackend } = require('./backend_config');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Api } = require("node-telegram-bot-api");
-const { pool } = require("./db");
 const { sendBrokerEmail } = require("./mailer");
 const crypto = require("crypto");
 
-const imapConfig = {
-    imap: {
-        user: process.env.GMAIL_USER,
-        password: process.env.GMAIL_APP_PASSWORD,
-        host: "imap.gmail.com",
-        port: 993,
-        tls: true,
-        tlsOptions: { rejectUnauthorized: false },
-        authTimeout: 10000
-    }
-};
 
 let processedEmailIds = new Set();
 
@@ -79,8 +69,8 @@ Output a JSON object with the following exact keys:
     }
 }
 
-async function checkInboundReplies(botApi, chatId) {
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+async function checkInboundReplies(botApi, chatId, { connect = openMailbox, analyze = analyzeInboundEmail } = {}) {
+    if (mailBackend() === 'smtp-imap' && !process.env.MAIL_BACKEND && (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD)) {
         return;
     }
 
@@ -88,32 +78,14 @@ async function checkInboundReplies(botApi, chatId) {
 
     let connection;
     try {
-        connection = await imaps.connect(imapConfig);
-        await connection.openBox("INBOX");
-
-        // Search for unseen messages in the last 2 days
-        const delay = 24 * 3600 * 1000 * 2;
-        const yesterday = new Date();
-        yesterday.setTime(Date.now() - delay);
-        const searchCriteria = ["UNSEEN", ["SINCE", yesterday]];
-        const fetchOptions = {
-            bodies: ["HEADER", "TEXT"],
-            markSeen: false
-        };
-
-        const messages = await connection.search(searchCriteria, fetchOptions);
+        connection = await connect();
+        const messages = await connection.listUnread(new Date(Date.now() - 2 * 86400000));
         console.log(`   Found ${messages.length} unread message(s) to inspect.`);
 
-        for (const item of messages) {
-            const uid = item.attributes.uid;
-            if (processedEmailIds.has(uid)) continue;
-
-            const header = item.parts.find(p => p.which === "HEADER");
-            const textPart = item.parts.find(p => p.which === "TEXT");
-
-            const subject = header?.body?.subject?.[0] || "No Subject";
-            const from = header?.body?.from?.[0] || "Unknown Sender";
-            const body = textPart?.body || "";
+        for (const uid of messages) {
+            const identity = connection.identity(uid);
+            if (processedEmailIds.has(identity)) continue;
+            const { subject, from, fromAddress, body, receivedAt } = await connection.getMessage(uid);
 
             // Quick pre-filter: is it relevant to real estate / apartment tours?
             const lowerSub = subject.toLowerCase();
@@ -130,7 +102,7 @@ async function checkInboundReplies(botApi, chatId) {
                                       lowerFrom.includes("marketing") ||
                                       lowerFrom.includes("update") ||
                                       lowerSub.includes("digest");
-            if (isSpamOrMarketing) { processedEmailIds.add(uid); continue; }
+            if (isSpamOrMarketing) { processedEmailIds.add(identity); continue; }
 
             const cleanBody = (typeof body === "string" ? body : "")
                 .replace(/<[^>]+>/g, " ")
@@ -149,12 +121,12 @@ async function checkInboundReplies(botApi, chatId) {
                                lowerBody.includes("showing") ||
                                lowerBody.includes("available for viewing");
 
-            if (!isRelevant) { processedEmailIds.add(uid); continue; }
+            if (!isRelevant) { processedEmailIds.add(identity); continue; }
 
             console.log(`   🔍 Analyzing broker reply: "${subject}" from: ${from}`);
-            const analysis = await analyzeInboundEmail(subject, from, cleanBody, header?.body?.date?.[0]);
+            const analysis = await analyze(subject, from, cleanBody, receivedAt);
 
-            if (analysis?.is_tour_invitation === false) processedEmailIds.add(uid);
+            if (analysis?.is_tour_invitation === false) processedEmailIds.add(identity);
             if (analysis && analysis.is_tour_invitation) {
                 console.log(`   🎉 Tour Invitation Detected! Address: ${analysis.listing_address} | Time: ${analysis.human_readable_time}`);
 
@@ -171,14 +143,12 @@ async function checkInboundReplies(botApi, chatId) {
                 }) : null;
 
                 // Generate unique tour ID for confirmation button
-                const tourId = crypto.createHash("md5").update(`${process.env.GMAIL_USER}:${connection.imap?._box?.uidvalidity || "inbox"}:${uid}`).digest("hex").slice(0, 12);
+                const tourId = crypto.createHash("md5").update(identity).digest("hex").slice(0, 12);
 
-                await pool.query(`
-                    INSERT INTO tour_schedules (id, listing_address, broker_email, broker_name, proposed_time, special_instructions, proposed_datetime)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING
-                `, [tourId, analysis.listing_address || subject, from.match(/<([^>]+)>/)?.[1] || from,
-                    analysis.broker_name || "Broker", analysis.human_readable_time || "TBD",
-                    analysis.special_instructions || null, hasTime ? startTime.toISOString() : null]);
+                await repository.saveTour({ id: tourId, listing_address: analysis.listing_address || subject,
+                    broker_email: fromAddress || from.match(/<([^>]+)>/)?.[1] || from,
+                    broker_name: analysis.broker_name || 'Broker', proposed_time: analysis.human_readable_time || 'TBD',
+                    special_instructions: analysis.special_instructions || null, proposed_datetime: hasTime ? startTime.toISOString() : null });
                 const esc = value => String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
                 const telegramMessage = `📅 <b>TOUR INVITATION RECEIVED!</b>\n\n` +
@@ -204,23 +174,24 @@ async function checkInboundReplies(botApi, chatId) {
                         }
                     });
                     console.log(`📱 Sent Tour Alert to Telegram for: ${analysis.listing_address}`);
-                    await connection.addFlags(uid, "\\Seen");
-                    processedEmailIds.add(uid);
+                    await connection.markRead(uid);
+                    processedEmailIds.add(identity);
                 }
             }
         }
     } catch (err) {
         console.warn("⚠️ Inbound listener check error:", err.message);
+        if (process.env.MAIL_BACKEND) throw err;
     } finally {
         if (connection) {
-            connection.end();
+            await connection.close();
         }
     }
 }
 
 async function confirmTourBooking(tourId) {
     try {
-        const res = await pool.query(`SELECT * FROM tour_schedules WHERE id = $1 LIMIT 1`, [tourId]);
+        const res = await repository.getTour(tourId);
         const tour = res.rows[0];
         if (!tour) return { success: false, reason: "Tour schedule record not found" };
 
@@ -244,7 +215,7 @@ async function confirmTourBooking(tourId) {
             body
         });
 
-        await pool.query(`UPDATE tour_schedules SET status = 'confirmed' WHERE id = $1`, [tourId]);
+        await repository.confirmTour(tourId);
         return { success: true, tour };
     } catch (err) {
         console.error("Error confirming tour booking:", err.message);

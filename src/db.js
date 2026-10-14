@@ -1,8 +1,10 @@
 require('dotenv').config();
-const { Pool } = require('pg');
-const sqlite3 = require('sqlite3').verbose();
+const { databaseBackend } = require('./backend_config');
 const path = require('path');
 const crypto = require('crypto');
+const { migrateEvaluationQueue } = require('./evaluation_migration');
+const { migrateRentTerms } = require('./rent_migration');
+const { migrateCommute } = require('./commute_migration');
 
 const columns = {
     url: 'TEXT', title: 'TEXT', price: 'INTEGER', bedrooms: 'REAL', bathrooms: 'REAL',
@@ -26,9 +28,12 @@ let pgPool;
 let sqliteDb;
 let ready;
 let activeEngine;
-if (process.env.DATABASE_URL) {
+const backend = databaseBackend();
+let supabase;
+if (backend === 'postgres') {
+    const { Pool } = require('pg');
     pgPool = new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10000,
-        ssl: process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false } });
+        ssl: ['localhost', '127.0.0.1', '[::1]'].includes(new URL(process.env.DATABASE_URL).hostname) ? false : { rejectUnauthorized: false } });
     pgPool.on('error', err => console.error('Unexpected background database error:', err.message));
 }
 function sqliteQuery(sql, params = []) {
@@ -40,7 +45,7 @@ function sqliteQuery(sql, params = []) {
         return '?';
     });
     return new Promise((resolve, reject) => {
-        if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(converted)) {
+        if (/^\s*(SELECT|PRAGMA|WITH)\b/i.test(converted) || /\bRETURNING\b/i.test(converted)) {
             sqliteDb.all(converted, values, (err, rows) => err ? reject(err) : resolve({ rows, rowCount: rows.length }));
         } else {
             sqliteDb.run(converted, values, function(err) {
@@ -61,19 +66,28 @@ async function migrate(query, engine) {
             for (const [name, type] of Object.entries(fields)) await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${name} ${type}`);
         }
     }
+    await migrateEvaluationQueue(query, engine);
+    await migrateRentTerms(query, engine);
+    await migrateCommute(query, engine);
     const { rows } = await query('SELECT id FROM listings WHERE id_hash IS NULL');
     for (const row of rows) await query('UPDATE listings SET id_hash = $1 WHERE id = $2', [crypto.createHash('md5').update(row.id).digest('hex'), row.id]);
 }
 async function initialize() {
-    if (pgPool) {
+    if (backend === 'supabase') {
+        supabase = require('./supabase_client').createSupabaseClient();
+        await supabase.verifySchema();
+        activeEngine = 'supabase';
+    } else if (pgPool) {
         // Never silently switch to an empty local database when a configured database is unavailable.
         await migrate(pgPool.query.bind(pgPool), 'pg');
         activeEngine = 'pg';
     } else {
+        const sqlite3 = require('sqlite3').verbose();
         const dbPath = process.env.SQLITE_PATH || path.resolve(__dirname, '..', 'listings.db');
         await new Promise((resolve, reject) => {
             sqliteDb = new sqlite3.Database(dbPath, err => err ? reject(err) : resolve());
         });
+        sqliteDb.configure('busyTimeout', 10000);
         await migrate(sqliteQuery, 'sqlite');
         activeEngine = 'sqlite';
     }
@@ -84,13 +98,19 @@ function initDB() {
     return ready;
 }
 const pool = {
+    backend,
+    async rpc(name, args) { await initDB(); return supabase.rpc(name, args); },
+    async rest(table, options) { await initDB(); return supabase.rest(table, options); },
+    async readAll(table, options) { await initDB(); return supabase.readAll(table, options); },
     async query(sql, params = []) {
+        if (backend === 'supabase') throw new Error('Direct SQL is unavailable with DB_BACKEND=supabase; use repository operations or a local maintenance connection');
         await initDB();
         return activeEngine === 'pg' ? pgPool.query(sql, params) : sqliteQuery(sql, params);
     },
     async end() {
+        if (supabase) await supabase.close();
         if (pgPool) await pgPool.end();
         if (sqliteDb) await new Promise((resolve, reject) => sqliteDb.close(err => err ? reject(err) : resolve()));
     }
 };
-module.exports = { pool, initDB };
+module.exports = { pool, initDB, migrate };

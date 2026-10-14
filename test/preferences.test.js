@@ -97,6 +97,7 @@ test('notifier rejects high-scoring Harlem while allowing Williamsburg, Queens, 
     } finally {
         for (const [id, old] of originals) { if (old) require.cache[id] = old; else delete require.cache[id]; }
         delete require.cache[require.resolve('../src/notifier')];
+        delete require.cache[require.resolve('../src/repository')];
         if (oldToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = oldToken;
         if (oldChat === undefined) delete process.env.TELEGRAM_CHAT_ID; else process.env.TELEGRAM_CHAT_ID = oldChat;
     }
@@ -161,5 +162,20 @@ test('dashboard API serves saved preferences and recalculates stale location fla
     } finally {
         for (const [id, old] of originals) { if (old) require.cache[id] = old; else delete require.cache[id]; }
         delete require.cache[require.resolve('../src/server')];
+        delete require.cache[require.resolve('../src/repository')];
     }
+});
+
+test('malformed building lookup responses remain Unknown', async () => {
+    const https = require('node:https'), original = https.get;
+    https.get = (url, options, callback) => {
+        const request = new EventEmitter();
+        queueMicrotask(() => {
+            const response = new EventEmitter(); response.statusCode = 200;
+            callback(response); response.emit('data', '{}'); response.emit('end');
+        });
+        return request;
+    };
+    try { assert.equal((await require('../src/building_health').checkBuildingHealth('100 Main Street', 'Queens')).grade, 'Unknown'); }
+    finally { https.get = original; }
 });
