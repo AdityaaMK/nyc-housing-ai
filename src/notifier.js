@@ -1,6 +1,6 @@
 const { repository } = require('./repository');
 require("dotenv").config();
-const crypto = require("crypto");
+const { buildListingAlert } = require('./telegram_messages');
 const { Api } = require("node-telegram-bot-api");
 const { initDB } = require("./db");
 
@@ -27,6 +27,7 @@ async function notifyHighScoringListings() {
     console.log(`Found ${pending.length} listings to review for mobile alerts (threshold >= 75)...`);
 
     for (const listing of pending) {
+        if (listing.status !== 'inbox') continue;
         const score = listing.suitability_score || 0;
         // Never let score bonuses or a stale model-generated flag override saved locations.
         listing.is_preferred = matchesLocation(listing, preferences);
@@ -42,87 +43,7 @@ async function notifyHighScoringListings() {
             continue;
         }
 
-        let redFlags = "None";
-        let pros = "None";
-        try { if (listing.red_flags) redFlags = JSON.parse(listing.red_flags).join(", "); } catch(e){}
-        try { if (listing.pros) pros = JSON.parse(listing.pros).join(", "); } catch(e){}
-        
-        function esc(s) {
-            if (!s) return "";
-            return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        }
-
-        const feeText = esc(listing.is_fee ? `Yes (${listing.fee_estimate})` : "No Fee 💸");
-        const title = esc(listing.title || "Unknown Apartment");
-        const priceStr = `$${Number(listing.price).toLocaleString()}`;
-        const grossStr = (listing.true_gross_rent && listing.true_gross_rent > 0)
-            ? `$${Number(listing.true_gross_rent).toLocaleString()}`
-            : priceStr;
-        const neighborhoodTag = listing.neighborhood 
-            ? `\n📍 <b>Neighborhood:</b> ${esc(listing.neighborhood)} ${listing.is_preferred ? "⭐ (Preferred)" : ""}`
-            : "";
-        
-        const sourceName = ({ renthop: "RentHop", compass: "Compass", streeteasy: "StreetEasy" })[listing.source] || "Listing";
-        const sourceBadge = `\n🌐 <b>Source:</b> ${sourceName}`;
-
-        const commuteInfo = listing.commute_summary
-            ? `\n🚇 <b>Commute to 620 8th Ave:</b> ${esc(listing.commute_summary)}`
-            : (listing.commute_minutes ? `\n🚇 <b>Commute to 620 8th Ave:</b> ~${listing.commute_minutes} mins` : "");
-
-        const manhattanCommute = listing.manhattan_commute_summary
-            ? '\n🚉 <b>AI estimate to Manhattan:</b> ' + listing.manhattan_commute_minutes + ' min to ' + esc(listing.manhattan_arrival_station) + ' — ' + esc(listing.manhattan_commute_summary) : '';
-
-        let buildingHealthBadge = "";
-        try {
-            if (listing.building_health) {
-                const bh = JSON.parse(listing.building_health);
-                if (bh.summary) {
-                    buildingHealthBadge = `\n🏥 <b>Building Health:</b> ${esc(bh.summary)}`;
-                }
-            }
-        } catch(e) {}
-
-        const message = `🚨 <b>NEW MATCH: ${title}</b>\n` +
-                        `💰 <b>Price:</b> ${priceStr} ` + 
-                        `(<i>Gross: ${grossStr}</i>)\n` +
-                        `🛏 <b>Bed:</b> ${listing.bedrooms} | 🛁 <b>Bath:</b> ${listing.bathrooms}` +
-                        `${neighborhoodTag}` +
-                        `${sourceBadge}` +
-                        `${commuteInfo}` +
-                        manhattanCommute +
-                        `${buildingHealthBadge}\n` +
-                        `⚠️ <b>Broker Fee:</b> ${feeText}\n\n` +
-                        `🚩 <b>Red Flags:</b> ${esc(redFlags || "None")}\n` +
-                        `✅ <b>Pros:</b> ${esc(pros || "None")}\n\n` +
-                        `📊 <b>AI Suitability Score:</b> ${score}/100`;
-
-        const actionId = listing.id_hash 
-            ? listing.id_hash 
-            : (listing.id.length > 50 ? crypto.createHash("md5").update(listing.id).digest("hex") : listing.id);
-
-        const inlineButtons = [
-            [{ text: `🌐 View on ${sourceName}`, url: listing.url }]
-        ];
-
-        // Add buttons for cross-posted sources if any
-        try {
-            if (listing.cross_posted_sources) {
-                const cross = JSON.parse(listing.cross_posted_sources);
-                for (const c of cross) {
-                    const cName = c.source === 'renthop' ? 'RentHop' : 'StreetEasy';
-                    inlineButtons.push([{ text: `🔗 Also listed on ${cName}`, url: c.url }]);
-                }
-            }
-        } catch(e) {}
-
-        inlineButtons.push([
-            { text: "✉️ Send Intro Packet", callback_data: `apply_${actionId}` },
-            { text: "❌ Pass", callback_data: `pass_${actionId}` }
-        ]);
-
-        const keyboard = {
-            inline_keyboard: inlineButtons
-        };
+        const { text: message, reply_markup: keyboard } = buildListingAlert(listing);
 
         if (bot && chatId) {
             try {
@@ -132,7 +53,7 @@ async function notifyHighScoringListings() {
                     parse_mode: "HTML",
                     reply_markup: keyboard
                 });
-                console.log(`📱 Sent Telegram alert for: ${title} (Score: ${score}/100)`);
+                console.log(`📱 Sent Telegram alert for listing ${listing.id} (Score: ${score}/100)`);
             } catch (e) {
                 console.error(`Failed to send Telegram message:`, e.message);
                 continue;

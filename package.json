@@ -23,7 +23,12 @@
     "cloud:check": "node scripts/cloud-check.js",
     "db:migrate:https": "node scripts/migrate-https.js",
     "startup:install": "node scripts/macos/install.cjs",
-    "startup:remove": "node scripts/macos/install.cjs --uninstall"
+    "startup:remove": "node scripts/macos/install.cjs --uninstall",
+    "telegram:worker": "node src/telegram_worker.js",
+    "telegram:start": "pm2 start ecosystem.telegram.config.cjs",
+    "telegram:stop": "pm2 stop housing-telegram",
+    "telegram:logs": "pm2 logs housing-telegram",
+    "telegram:status": "node src/telegram_worker.js --status"
   },
   "repository": {
     "type": "git",
