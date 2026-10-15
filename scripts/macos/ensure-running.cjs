@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 // Follow the saved deployment, not a hard-coded legacy checkout or process name.
 // An intentional `pm2 stop NAME && pm2 save` keeps that service stopped.
-const managedNames = new Set(['housing-daemon', 'housing-scraper', 'housing-api']);
+const managedNames = new Set(['housing-daemon', 'housing-scraper', 'housing-api', 'housing-scorer', 'housing-telegram']);
 const savedPath = path.join(process.env.PM2_HOME || path.join(os.homedir(), '.pm2'), 'dump.pm2');
 const log = message => console.log(`${new Date().toISOString()} ${message}`);
 const savedApps = JSON.parse(fs.readFileSync(savedPath, 'utf8'));
@@ -46,6 +46,8 @@ const deadline = setTimeout(() => {
                     node_args: saved.node_args,
                     autorestart: saved.autorestart !== false,
                     restart_delay: saved.restart_delay,
+                    exp_backoff_restart_delay: saved.exp_backoff_restart_delay,
+                    min_uptime: saved.min_uptime,
                     max_memory_restart: saved.max_memory_restart,
                     kill_timeout: saved.kill_timeout
                 });

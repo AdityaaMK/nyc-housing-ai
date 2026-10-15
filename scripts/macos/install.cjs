@@ -56,7 +56,7 @@ function main(args = process.argv.slice(2)) {
     const dump = path.join(paths.pm2Home, 'dump.pm2');
     if (!fs.existsSync(dump)) throw new Error('Start the desired housing services and run pm2 save before installing automatic startup.');
     const saved = JSON.parse(fs.readFileSync(dump, 'utf8'));
-    if (!saved.some(app => ['housing-daemon', 'housing-scraper', 'housing-api'].includes(app.name) && app.status !== 'stopped')) {
+    if (!saved.some(app => ['housing-daemon', 'housing-scraper', 'housing-api', 'housing-scorer', 'housing-telegram'].includes(app.name) && app.status !== 'stopped')) {
         throw new Error('No active housing services in the saved PM2 list. Start them and run pm2 save first.');
     }
     fs.mkdirSync(paths.directory, { recursive: true });

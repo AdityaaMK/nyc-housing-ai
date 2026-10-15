@@ -76,7 +76,7 @@ test('notifier rejects high-scoring Harlem while allowing Williamsburg, Queens, 
         { id: 'unknown', neighborhood: 'Unknown', location_area: null, is_preferred: true },
         { id: 'too-far', neighborhood: 'Williamsburg', location_area: 'Brooklyn', manhattan_commute_minutes: 21, is_preferred: true },
         { id: 'old-estimate', neighborhood: 'Astoria', location_area: 'Queens', manhattan_commute_minutes: undefined, commute_minutes: 10, is_preferred: true }
-    ].map(l => ({ ...arrival, ...l, title: l.id, suitability_score: 99, price: 2500, url: 'https://example.test/' + l.id }));
+    ].map(l => ({ ...arrival, ...l, status: 'inbox', title: l.id, suitability_score: 99, price: 2500, url: 'https://example.test/' + l.id }));
     const mocks = {
         dotenv: { config() {} },
         'node-telegram-bot-api': { Api: class { async sendMessage(message) { alerts.push(message); } } },

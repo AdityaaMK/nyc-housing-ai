@@ -97,6 +97,10 @@ Listing cards with a usable street address and known borough/city provide a “C
 
 For Supabase REST and Gmail API setup, local OAuth authorization, read-only diagnostics, migration, and rollback, see [the cloud HTTPS guide](docs/cloud-https.md). Existing backend defaults and continuous monitoring are unchanged.
 
+## Persistent Telegram worker
+
+`npm run telegram:start` launches the independent, supervised `housing-telegram` worker; `npm run telegram:status` checks its persistent heartbeat and delivery journal. It handles Telegram buttons and new listing alerts, summarizes the initial backlog once, and recovers from polling failures and process crashes. Use one deployment with persistent storage. See [Telegram setup, recovery, and host requirements](docs/telegram-worker.md) before enabling it alongside existing processes.
+
 ## macOS automatic startup and wake recovery
 
 Start the desired housing processes, save their configuration, then install the user LaunchAgent:

@@ -98,8 +98,10 @@ function escapeHtml(str) {
         .replace(/>/g, "&gt;");
 }
 
-function setupBotHandlers(botInstance) {
+function setupBotHandlers(botInstance, { chatId = process.env.TELEGRAM_CHAT_ID } = {}) {
     botInstance.on("callback_query", async (ctx) => {
+        // Ignore forwarded buttons, inline callbacks, and other chats before any side effect.
+        if (!chatId || String(ctx.chat?.id ?? ctx.callbackQuery?.message?.chat?.id) !== String(chatId)) return;
         const callbackData = ctx.callbackQuery?.data;
         if (!callbackData) return;
 
@@ -221,7 +223,7 @@ function setupBotHandlers(botInstance) {
     });
 
     botInstance.catch((err, ctx) => {
-        console.error("Telegram bot error encountered:", err);
+        console.error("Telegram action failed; check worker health.");
     });
 }
 
@@ -251,4 +253,4 @@ if (require.main === module) {
     initDB().then(startBot).catch(console.error);
 }
 
-module.exports = { startBot, generateIntroPacket };
+module.exports = { startBot, generateIntroPacket, setupBotHandlers };
