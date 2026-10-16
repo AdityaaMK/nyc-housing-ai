@@ -112,6 +112,26 @@ test('Supabase mutation counts come from exact totals and filters escape PostgRE
     const many = createSupabaseRepository({ async rest() { return { data: [{ id: 'one returned row' }], headers: new Headers({ 'content-range': '0-0/1201' }) }; } });
     assert.equal((await many.passListing('collision')).rowCount, 1201);
 });
+test('Supabase notification acknowledgement matches literal IDs and rejects missing rows', async () => {
+    const id = 'https://example.test/building/a,b)/4?x="y"&z=1';
+    let notified = false;
+    const db = createSupabaseClient({
+        env: { SUPABASE_URL: 'https://fixture.supabase.co', SUPABASE_SECRET_KEY: 'fixture' },
+        client: { async request(url, options) {
+            assert.equal(options.method, 'PATCH');
+            const params = new URL(url).searchParams;
+            assert.deepEqual([...params.keys()], ['id']);
+            const matched = params.get('id') === 'eq.' + id;
+            if (matched) notified = options.json.is_notified;
+            return { data: matched ? [{ id, is_notified: notified }] : [],
+                headers: new Headers({ 'content-range': matched ? '0-0/1' : '*/0' }) };
+        } }
+    });
+    const repository = createSupabaseRepository(db);
+    assert.equal((await repository.markNotified(id)).rowCount, 1);
+    assert.equal(notified, true);
+    await assert.rejects(repository.markNotified('missing'), /did not update exactly one listing/);
+});
 test('cloud diagnostic only reads schema/tables and verifies mailbox identity', async () => {
     const operations = [];
     const report = await require('../scripts/cloud-check').check({ database: {
