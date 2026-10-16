@@ -82,7 +82,14 @@ function createSupabaseRepository(db) {
         markApplied: async id => countResult(await db.rpc('housing_mark_applied', { p_action: id })),
         setBrokerEmail: (id, email) => patch('listings', action(id), { broker_email: email }),
         pendingNotifications: () => read('listings', { is_evaluated: 'eq.true', is_notified: 'eq.false' }),
-        markNotified: id => patch('listings', { id: eq(id) }, { is_notified: true }),
+        async markNotified(id) {
+            // Standalone eq values are literal text; PostgREST's quoted-value
+            // syntax applies inside logical expressions, not this query value.
+            // The HTTPS client safely URL-encodes the complete filter value.
+            const result = await patch('listings', { id: 'eq.' + id }, { is_notified: true });
+            if (result.rowCount !== 1) throw new Error('Notification acknowledgement did not update exactly one listing');
+            return result;
+        },
         statsRows: () => read('listings', { select: 'status,suitability_score,building_health,price,evaluation_status' }),
         listTours: () => read('tour_schedules', { order: 'created_at.desc,id.asc' }),
         async countTours() {
