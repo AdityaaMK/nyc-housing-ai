@@ -1,5 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-const Context = createContext(null);
+import { requestApi } from './api';
+import { useProduct } from './productState';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { GoogleCommuteContext as Context } from './GoogleCommuteContext';
 const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 const nyTime = value => new Date(value).toLocaleString('en-US', {
   timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
@@ -49,16 +51,12 @@ export function GoogleCommuteProvider({ children }) {
     setResults(previous => ({ ...previous, [id]: { loading: true } }));
     const timer = setTimeout(() => controller.abort(), 25000);
     try {
-      const res = await fetch(`${apiBase}/api/listings/${encodeURIComponent(id)}/commute`, {
-        method: 'POST', signal: controller.signal, cache: 'no-store'
+      const data = await requestApi(`/api/listings/${encodeURIComponent(id)}/commute`, {
+        method: 'POST', signal: controller.signal
       });
-      const data = await res.json();
-      if (!res.ok) {
-        if (statusMessages[data.code]) setStatus(previous => ({ ...previous, available: false, code: data.code }));
-        throw new Error(data.error || 'No Google Maps estimate was retrieved.');
-      }
       if (mounted.current) setResults(previous => ({ ...previous, [id]: { data } }));
     } catch (error) {
+      if (statusMessages[error.code]) setStatus(previous => ({ ...previous, available: false, code: error.code }));
       if (mounted.current) setResults(previous => ({ ...previous, [id]: {
         error: error.name === 'AbortError' ? 'Lookup cancelled or timed out. No estimate was retrieved.' : error.message
       } }));
@@ -70,20 +68,21 @@ export function GoogleCommuteProvider({ children }) {
   return <Context.Provider value={{ status, results, lookup, cancel: id => requests.current.get(id)?.abort() }}>{children}</Context.Provider>;
 }
 export function GoogleCommute({ listing }) {
+  const { unlocked } = useProduct();
   const { status, results, lookup, cancel } = useContext(Context);
   const result = results[listing.id];
   const data = result?.data;
   return <section className="mb-3 p-3 rounded-xl border border-slate-200 bg-white text-xs text-slate-700" aria-label="Google commute">
     <button type="button" onClick={() => lookup(listing.id)}
-      disabled={!listing.commute_address_available || !status?.available || result?.loading}
+      disabled={!unlocked || !listing.commute_address_available || !status?.available || result?.loading}
       className="px-3 py-2 rounded-lg bg-indigo-600 text-white font-bold disabled:bg-slate-200 disabled:text-slate-500">
       {result?.loading ? 'Getting Google commute…' : 'Get Google commute'}
     </button>
     {result?.loading && <button type="button" onClick={() => cancel(listing.id)} className="ml-3 underline">Cancel</button>}
     <div className="mt-2" aria-live="polite">
-      {!listing.commute_address_available ? <p>Address needed</p> : !status ? <p>Checking Google commute availability…</p> :
+      {!unlocked ? <p>Unlock owner access to request a Google commute.</p> : !listing.commute_address_available ? <p>Address needed</p> : !status ? <p>Checking Google commute availability…</p> :
         !status.available ? <p>{statusMessages[status.code] || statusMessages.service_error}{status.retryAt && ` Try after ${nyTime(status.retryAt)}.`}</p> :
-          <p>Arrive at 620 8th Avenue by 9:00 AM on the next weekday, New York time.</p>}
+          <p>Arrive at your saved office destination by 9:00 AM on the next weekday, New York time.</p>}
       {status?.remaining && <p className="mt-1 text-slate-500">Requests left: {status.remaining.daily} today · {status.remaining.rolling32Days} per rolling 32 days</p>}
       {result?.error && <p role="alert" className="mt-2 text-amber-800">{result.error}</p>}
       {data && <div className="mt-3 border-t border-slate-200 pt-3">

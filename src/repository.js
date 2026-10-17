@@ -36,6 +36,11 @@ function createSqlRepository(db) {
         markNudgeNotified: id => q('UPDATE listings SET nudge_notified = true WHERE id = $1', [id]),
         recordNudge: id => q('UPDATE listings SET nudged_at = CURRENT_TIMESTAMP, nudge_count = COALESCE(nudge_count, 0) + 1 WHERE id = $1', [id]),
         skipNudge: action => q('UPDATE listings SET nudge_count = 1 WHERE id = $1 OR id_hash = $1', [action]),
+        inboxInquiries: () => q("SELECT * FROM listings WHERE status = 'applied' AND broker_email IS NOT NULL ORDER BY applied_at, id"),
+        updateListingObservation: (id, { price }) => q('UPDATE listings SET price=$1 WHERE id=$2', [price, id]),
+        requeueEvaluation: id => q(`UPDATE listings SET is_evaluated=false,evaluation_status='pending',evaluation_attempts=0,
+            evaluation_next_at=NULL,evaluation_last_error=NULL,evaluation_claim_token=NULL,evaluation_claim_expires_at=NULL
+            WHERE id=$1 AND is_evaluated=true AND status<>'passed' AND evaluation_status<>'processing'`, [id]),
         async recordDuplicate({ normalizedAddress, newUrl, newSource }) {
             if (!normalizedAddress) return null;
             // A compare-and-swap retries only a known zero-row conflict, never an
@@ -98,6 +103,9 @@ function createSupabaseRepository(db) {
         markNudgeNotified: id => patch('listings', { id: eq(id) }, { nudge_notified: true }),
         recordNudge: async id => countResult(await db.rpc('housing_record_nudge', { p_id: id })),
         skipNudge: id => patch('listings', action(id), { nudge_count: 1 }),
+        inboxInquiries: () => read('listings', { status: 'eq.applied', broker_email: 'not.is.null', order: 'applied_at.asc,id.asc' }),
+        updateListingObservation: (id, { price }) => patch('listings', { id: eq(id) }, { price }),
+        requeueEvaluation: async id => countResult(await db.rpc('housing_requeue_evaluation', { p_id: id })),
         recordDuplicate: async ({ normalizedAddress, newUrl, newSource }) => !normalizedAddress ? null :
             (await db.rpc('housing_record_duplicate', { p_address: normalizedAddress, p_url: newUrl, p_source: newSource }))[0] || null
     };

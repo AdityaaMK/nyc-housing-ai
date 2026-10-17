@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { DatabaseSync } = require('node:sqlite');
 const { loadPreferences, matchesLocation, enforceLocation, scopedAddress, preferenceSummary } = require('../src/preferences');
 const { getSearchFeeds } = require('../src/search_feeds');
 const arrival = { manhattan_commute_minutes: 20, manhattan_arrival_station: '14 St', manhattan_commute_summary: 'Walk 5 min, wait 3 min, L train 12 min to 14 St in Manhattan' };
@@ -76,11 +77,23 @@ test('notifier rejects high-scoring Harlem while allowing Williamsburg, Queens, 
         { id: 'unknown', neighborhood: 'Unknown', location_area: null, is_preferred: true },
         { id: 'too-far', neighborhood: 'Williamsburg', location_area: 'Brooklyn', manhattan_commute_minutes: 21, is_preferred: true },
         { id: 'old-estimate', neighborhood: 'Astoria', location_area: 'Queens', manhattan_commute_minutes: undefined, commute_minutes: 10, is_preferred: true }
-    ].map(l => ({ ...arrival, ...l, status: 'inbox', title: l.id, suitability_score: 99, price: 2500, url: 'https://example.test/' + l.id }));
+    ].map(l => ({ ...arrival, ...l, status: 'inbox', title: l.id, suitability_score: 99, price: 2500, bedrooms: 1, bathrooms: 1, url: 'https://example.test/' + l.id }));
+    const featureDatabase = new DatabaseSync(':memory:');
+    featureDatabase.exec('CREATE TABLE feature_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
+    const loadedBefore = new Set(Object.keys(require.cache));
     const mocks = {
         dotenv: { config() {} },
         'node-telegram-bot-api': { Api: class { async sendMessage(message) { alerts.push(message); } } },
-        '../src/db': { initDB() {}, pool: { async query(sql, params) { if (sql.startsWith('SELECT')) return { rows }; updates.push(params[0]); return { rows: [] }; } } }
+        '../src/db': { initDB() {}, pool: { backend: 'sqlite', async query(sql, params = []) {
+            if (sql.includes('feature_records')) {
+                const args = [];
+                sql = sql.replace(/\$(\d+)/g, (_, index) => { args.push(params[index - 1]); return '?'; });
+                const result = featureDatabase.prepare(sql).all(...args);
+                return { rows: result, rowCount: result.length };
+            }
+            if (sql.startsWith('SELECT')) return { rows };
+            updates.push(params[0]); return { rows: [] };
+        } } }
     };
     const originals = Object.entries(mocks).map(([name, exports]) => {
         const id = require.resolve(name), old = require.cache[id];
@@ -98,6 +111,10 @@ test('notifier rejects high-scoring Harlem while allowing Williamsburg, Queens, 
         for (const [id, old] of originals) { if (old) require.cache[id] = old; else delete require.cache[id]; }
         delete require.cache[require.resolve('../src/notifier')];
         delete require.cache[require.resolve('../src/repository')];
+        for (const id of Object.keys(require.cache)) {
+            if (!loadedBefore.has(id) && id.startsWith(require('node:path').resolve(__dirname, '../src') + '/')) delete require.cache[id];
+        }
+        featureDatabase.close();
         if (oldToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN; else process.env.TELEGRAM_BOT_TOKEN = oldToken;
         if (oldChat === undefined) delete process.env.TELEGRAM_CHAT_ID; else process.env.TELEGRAM_CHAT_ID = oldChat;
     }
@@ -136,10 +153,21 @@ test('dashboard API serves saved preferences and recalculates stale location fla
         { id: 'queens', neighborhood: 'Astoria', location_area: 'Queens', ...arrival, is_preferred: false },
         { id: 'too-far', neighborhood: 'Williamsburg', ...arrival, manhattan_commute_minutes: 21, is_preferred: true },
         { id: 'legacy', neighborhood: 'Williamsburg', commute_minutes: 15, is_preferred: true }
-    ];
+    ].map(row => ({ price: 2500, bedrooms: 1, bathrooms: 1, ...row }));
+    // Feature reads use the real SQLite store while listing rows stay focused on
+    // this endpoint's location-regression fixture.
+    const featureDatabase = new DatabaseSync(':memory:');
+    featureDatabase.exec('CREATE TABLE feature_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
+    const loadedBefore = new Set(Object.keys(require.cache));
     const mocks = {
         dotenv: { config() {} },
-        '../src/db': { initDB() {}, pool: { async query() { return { rows }; } } },
+        '../src/db': { initDB() {}, pool: { backend: 'sqlite', async query(sql, params = []) {
+            if (!sql.includes('feature_records')) return { rows };
+            const args = [];
+            sql = sql.replace(/\$(\d+)/g, (_, index) => { args.push(params[index - 1]); return '?'; });
+            const result = featureDatabase.prepare(sql).all(...args);
+            return { rows: result, rowCount: result.length };
+        } } },
         '../src/inbound_listener': { confirmTourBooking() {}, generateGoogleCalendarUrl() {} }
     };
     const originals = Object.entries(mocks).map(([name, exports]) => {
@@ -159,10 +187,26 @@ test('dashboard API serves saved preferences and recalculates stale location fla
         const listings = await get('/api/listings');
         assert.deepEqual(listings.map(l => l.is_preferred), [false, true, true, false, false]);
         assert.equal(listings[1].location_area, 'Brooklyn');
+        assert.ok(listings.every(listing => listing.preference_revision === 1));
+
+        // A different process can save settings after the API has cached them.
+        // The first listing request must use that saved revision everywhere.
+        const saved = loadPreferences();
+        const changed = { ...saved, budgets: { ...saved.budgets, studioOneBedroom: { ...saved.budgets.studioOneBedroom, maxRent: 2400 } } };
+        featureDatabase.prepare("UPDATE feature_records SET data=?,revision=2 WHERE collection='settings' AND id='search'").run(JSON.stringify(changed));
+        assert.equal(loadPreferences().revision, 1);
+        const refreshed = await get('/api/listings');
+        assert.ok(refreshed.every(listing => listing.preference_revision === 2));
+        assert.ok(refreshed.every(listing => listing.preferences_match === false));
+        assert.ok(refreshed.every(listing => listing.is_preferred === false));
     } finally {
         for (const [id, old] of originals) { if (old) require.cache[id] = old; else delete require.cache[id]; }
         delete require.cache[require.resolve('../src/server')];
         delete require.cache[require.resolve('../src/repository')];
+        for (const id of Object.keys(require.cache)) {
+            if (!loadedBefore.has(id) && id.startsWith(require('node:path').resolve(__dirname, '../src') + '/')) delete require.cache[id];
+        }
+        featureDatabase.close();
     }
 });
 

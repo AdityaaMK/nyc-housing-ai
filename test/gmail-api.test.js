@@ -75,6 +75,14 @@ test('Gmail uses Nodemailer MIME with encoded subject, Reply-To and retained BCC
     const broken = fixture(async () => { attempts++; throw new HttpsError('Gmail API', 'request failed'); });
     await assert.rejects(broken.gmail.send(mail)); assert.equal(attempts, 1);
 });
+test('worker mailbox listing includes read replies without changing read flags', async () => {
+    const f = fixture(async (url, options) => {
+        assert.equal(options.method, undefined);
+        assert.equal(new URL(url).searchParams.get('q'), 'in:inbox after:1000');
+        return { messages: [{ id: 'opened-on-phone' }] };
+    });
+    assert.deepEqual(await f.gmail.listMessages(new Date(1000000)), ['opened-on-phone']);
+});
 test('Gmail parses encoded headers and multipart base64/quoted-printable raw MIME with mailparser', async () => {
     const raw = [
         'From: =?UTF-8?B?QnJva2VyIMOJ?= <broker@example.test>', 'Subject: =?UTF-8?B?VG91ciDigJQgVHVlc2RheQ==?=',

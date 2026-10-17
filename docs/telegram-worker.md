@@ -2,6 +2,8 @@
 
 The independent `housing-telegram` process listens for existing bot buttons and checks for newly scored matches every 30 seconds. It does not start the scraper, scorer, inbox listener, or nudge scanner. Existing buttons can still send an inquiry, confirm a tour, or send a nudge when clicked in the configured chat. `/status` reports that the bot is responding. Other chats and forwarded/inline buttons without the configured chat are ignored.
 
+It also consumes tour alerts and follow-up prompts queued by the separate [broker inbox worker](inbox-worker.md). Both workers must share `INBOX_STATE_DIR` on the same host and use matching mailbox/database/chat settings. The inbox worker can queue alerts while Telegram is stopped. Imported alerts use this same delivery journal and recovery commands. Follow-up prompts wait for a fresh inbox check and are rechecked for broker replies before dispatch.
+
 Use Node.js 24+, the existing database credentials, `TELEGRAM_BOT_TOKEN`, and a numeric `TELEGRAM_CHAT_ID`. Set `TELEGRAM_STATE_DIR` to a private persistent directory (default `.state/telegram` in the checkout). Keep the existing proxy and CA environment settings. The Telegram transport uses the shared proxy configuration, validates TLS, and disables hidden request retries. `NODE_USE_ENV_PROXY=1` in the PM2 config also enables proxy routing for the existing Gemini callback code on Node 24.
 
 ## Start and monitor

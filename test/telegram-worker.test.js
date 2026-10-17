@@ -17,7 +17,7 @@ function fixture(t) {
     const repository = { pendingNotifications: async () => ({ rows: rows.filter(r => !acknowledged.includes(r.id)) }),
         markNotified: async id => { acknowledged.push(id); } };
     const api = { sendMessage: async payload => { delivered.push(payload); return { message_id: delivered.length }; } };
-    const listing = id => ({ id, title: '350 W 50th St #4B', status: 'inbox', suitability_score: 90, price: 2500,
+    const listing = id => ({ id, title: '350 W 50th St #4B', status: 'inbox', suitability_score: 90, price: 2500, bedrooms: 1, bathrooms: 1,
         location_area: 'Manhattan', neighborhood: "Hell's Kitchen", url: 'https://example.test/' + id });
     let clock = 1000000;
     return { file, rows, delivered, acknowledged, repository, api, listing, now: () => clock, advance: ms => { clock += ms; },

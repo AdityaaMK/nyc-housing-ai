@@ -1,4 +1,5 @@
-const { test } = require('node:test');
+const { test, after } = require('node:test');
+const { DatabaseSync } = require('node:sqlite');
 const assert = require('node:assert/strict');
 const rows = ['pending', 'processing', 'completed', 'retry_wait', 'failed'].map((state, i) => ({
     id: String(i), title: 'Fixture', status: 'inbox', evaluation_status: state,
@@ -8,8 +9,15 @@ const rows = ['pending', 'processing', 'completed', 'retry_wait', 'failed'].map(
     evaluation_next_at: state === 'retry_wait' ? '2026-10-12T20:01:00Z' : null,
     evaluation_completed_at: state === 'completed' ? '2026-10-12T20:00:00Z' : null
 }));
-require.cache[require.resolve('../src/db')] = { exports: { initDB() {}, pool: { async query(sql) {
-    return { rows: sql.includes('tour_schedules') ? [{ count: 0 }] : rows };
+const featureDatabase = new DatabaseSync(':memory:');
+featureDatabase.exec('CREATE TABLE feature_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
+after(() => featureDatabase.close());
+require.cache[require.resolve('../src/db')] = { exports: { initDB() {}, pool: { backend: 'sqlite', async query(sql, params = []) {
+    if (!sql.includes('feature_records')) return { rows: sql.includes('tour_schedules') ? [{ count: 0 }] : rows };
+    const args = [];
+    sql = sql.replace(/\$(\d+)/g, (_, index) => { args.push(params[index - 1]); return '?'; });
+    const result = featureDatabase.prepare(sql).all(...args);
+    return { rows: result, rowCount: result.length };
 } } } };
 require.cache[require.resolve('../src/inbound_listener')] = { exports: { confirmTourBooking() {}, generateGoogleCalendarUrl() {} } };
 const app = require('../src/server');

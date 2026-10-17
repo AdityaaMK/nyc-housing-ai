@@ -1,4 +1,7 @@
 import { GoogleCommute, GoogleCommuteProvider } from './GoogleCommute';
+import { requestApi } from './api';
+import { useProduct } from './productState';
+import { ProductProvider, OwnerAccess, ProductNavigation, ProductPage, ListingActions } from './ProductWorkspace';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Building,
@@ -21,15 +24,9 @@ import {
   LayoutGrid
 } from 'lucide-react';
 
-const apiBase = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
-async function requestApi(path, options) {
-  const response = await fetch(apiBase + path, options);
-  const data = await response.json();
-  if (!response.ok || data.success === false) throw new Error(data.error || data.reason || 'Request failed');
-  return data;
-}
 
 function App() {
+  const { unlocked } = useProduct();
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('pipeline'); // 'pipeline' | 'tours' | 'map'
   const [listings, setListings] = useState([]);
@@ -55,7 +52,7 @@ function App() {
     try {
       const options = { signal: controller.signal };
       const [listRes, tourRes, statRes, prefRes] = await Promise.all([
-        requestApi('/api/listings', options), requestApi('/api/tours', options),
+        requestApi('/api/listings', options), unlocked ? requestApi('/api/tours', options) : Promise.resolve([]),
         requestApi('/api/stats', options), requestApi('/api/preferences', options)
       ]);
       if (!Array.isArray(listRes) || !Array.isArray(tourRes) || !statRes || !prefRes) throw new Error('Invalid dashboard response');
@@ -70,7 +67,7 @@ function App() {
       clearTimeout(timeout);
       if (refreshRef.current === controller) { refreshRef.current = null; setLoading(false); }
     }
-  }, []);
+  }, [unlocked]);
 
   useEffect(() => {
     const refreshVisible = () => { if (!document.hidden) void fetchAllData(); };
@@ -99,16 +96,18 @@ function App() {
     }
   };
 
-  const confirmTour = async (tourId) => {
+  const confirmTour = async (tourId, expectedRevision) => {
     try {
       await requestApi(`/api/tours/${encodeURIComponent(tourId)}/confirm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedRevision })
       });
       fetchAllData();
     } catch (err) {
       console.error(err);
       setError(err.message);
+      throw err;
     }
   };
 
@@ -137,6 +136,7 @@ function App() {
       <div className="max-w-[1500px] mx-auto">
         {error && <div role="alert" className="mb-4 rounded-xl bg-red-50 border border-red-200 p-4 text-red-800">Could not complete request: {error}</div>}
         
+        <OwnerAccess />
         {/* HEADER */}
         <header className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-sm border border-white">
           <div className="flex items-center gap-4">
@@ -144,7 +144,7 @@ function App() {
               <Building className="w-8 h-8 text-white" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900">NYC Housing AI Copilot</h1>
                 <span className="px-2.5 py-0.5 text-xs font-bold bg-emerald-100 text-emerald-700 rounded-full border border-emerald-200">
                   Housing Monitor
@@ -170,7 +170,7 @@ function App() {
             <div className="w-px h-8 bg-slate-200"></div>
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tours</span>
-              <div className="text-xl font-black text-indigo-600 leading-tight">{tours.length}</div>
+              <div className="text-xl font-black text-indigo-600 leading-tight">{unlocked ? tours.length : 0}</div>
             </div>
             <div className="w-px h-8 bg-slate-200"></div>
             <div>
@@ -194,7 +194,7 @@ function App() {
 
         {/* NAVIGATION TABS & FILTER BAR */}
         <div className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white/70 backdrop-blur-md p-2 rounded-2xl border border-slate-200/60 shadow-sm">
-          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
             <button
               onClick={() => setActiveTab('pipeline')}
               className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
@@ -215,9 +215,9 @@ function App() {
               }`}
             >
               <Calendar className="w-4 h-4" /> Tours & Calendar
-              {tours.length > 0 && (
+              {unlocked && tours.length > 0 && (
                 <span className="px-1.5 py-0.2 bg-white text-blue-700 text-xs rounded-full font-black">
-                  {tours.length}
+                  {unlocked ? tours.length : 0}
                 </span>
               )}
             </button>
@@ -255,6 +255,8 @@ function App() {
           )}
         </div>
 
+        <ProductNavigation activeTab={activeTab} onSelect={setActiveTab} />
+        <ProductPage activeTab={activeTab} listings={listings} onRefresh={fetchAllData} onConfirm={confirmTour} />
         {/* TAB 1: PIPELINE KANBAN */}
         {activeTab === 'pipeline' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -285,14 +287,9 @@ function App() {
           </div>
         )}
 
-        {/* TAB 2: TOURS & CALENDAR */}
-        {activeTab === 'tours' && (
-          <ToursView tours={tours} onConfirm={confirmTour} />
-        )}
-
         {/* TAB 3: COMMUTE & MAP GUIDE */}
         {activeTab === 'map' && (
-          <CommuteMapView listings={listings} />
+          <CommuteMapView listings={listings} preferences={preferences} />
         )}
 
       </div>
@@ -351,6 +348,7 @@ function PipelineColumn({ title, count, listings, theme, onPass, onApply }) {
 }
 
 function ListingCard({ l, onPass, onApply }) {
+  const { unlocked } = useProduct();
   let rentTerms = null;
   try { rentTerms = typeof l.rent_terms === 'string' ? JSON.parse(l.rent_terms) : l.rent_terms; } catch {}
   const effectiveRent = l.effective_monthly_rent;
@@ -536,6 +534,7 @@ function ListingCard({ l, onPass, onApply }) {
         </div>
       )}
 
+      <ListingActions listing={l} />
       {/* Action Buttons */}
       <div className="flex gap-2 pt-3 border-t border-slate-100">
         <a
@@ -549,6 +548,7 @@ function ListingCard({ l, onPass, onApply }) {
 
         {onApply && (
           <button
+            disabled={!unlocked}
             onClick={() => onApply(l.id)}
             className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-2 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1.5 transition-all shadow-sm shadow-blue-200"
           >
@@ -558,6 +558,7 @@ function ListingCard({ l, onPass, onApply }) {
 
         {onPass && (
           <button
+            disabled={!unlocked}
             onClick={() => onPass(l.id)}
             className="flex-none bg-rose-50 hover:bg-rose-100 text-rose-600 p-2 rounded-xl transition-colors border border-rose-100"
             title="Pass"
@@ -570,102 +571,9 @@ function ListingCard({ l, onPass, onApply }) {
   );
 }
 
-function ToursView({ tours, onConfirm }) {
-  return (
-    <div className="bg-white/80 backdrop-blur-md rounded-3xl p-6 md:p-8 border border-slate-200 shadow-sm">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-xl font-extrabold text-slate-900 flex items-center gap-2">
-            <Calendar className="w-6 h-6 text-indigo-600" /> Inbound Tour Schedules & Bookings
-          </h2>
-          <p className="text-slate-500 text-sm mt-1">
-            Review broker proposals, add a tour to your calendar, and confirm when you are ready
-          </p>
-        </div>
-        <span className="px-3 py-1 bg-indigo-100 text-indigo-800 text-xs font-black rounded-full">
-          {tours.length} Total Showings
-        </span>
-      </div>
-
-      {tours.length === 0 ? (
-        <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
-          <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <div className="text-slate-600 font-bold">No apartment tours scheduled yet</div>
-          <div className="text-slate-400 text-sm mt-1">
-            When a broker replies with available showing times, they appear right here
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {tours.map(tour => (
-            <div
-              key={tour.id}
-              className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm hover:shadow-md transition-shadow relative"
-            >
-              <div className="flex items-center justify-between gap-2 mb-3">
-                <span
-                  className={`px-2.5 py-0.5 text-xs font-black rounded-full uppercase tracking-wider ${
-                    tour.status === 'confirmed'
-                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                      : 'bg-amber-100 text-amber-800 border border-amber-200'
-                  }`}
-                >
-                  {tour.status === 'confirmed' ? '✅ Confirmed' : '⏳ Tour Proposed'}
-                </span>
-                <span className="text-xs text-slate-400">
-                  {tour.created_at ? new Date(tour.created_at).toLocaleDateString() : 'Date unavailable'}
-                </span>
-              </div>
-
-              <h3 className="font-extrabold text-slate-900 text-lg mb-2">
-                {tour.listing_address}
-              </h3>
-
-              <div className="space-y-1.5 text-xs text-slate-600 mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                <div className="flex items-center gap-2 font-bold text-slate-800">
-                  <Clock className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Time: {tour.proposed_time}</span>
-                </div>
-                {tour.broker_name && (
-                  <div>
-                    <b>Broker:</b> {tour.broker_name} {tour.broker_email ? `(${tour.broker_email})` : ''}
-                  </div>
-                )}
-                {tour.special_instructions && (
-                  <div className="text-amber-800">
-                    <b>Buzzer / Entry:</b> {tour.special_instructions}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                {tour.calendar_url && <a
-                  href={tour.calendar_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1.5 transition-colors border border-indigo-200"
-                >
-                  <Calendar className="w-3.5 h-3.5" /> Add to Google Calendar
-                </a>}
-
-                {tour.status !== 'confirmed' && (
-                  <button
-                    onClick={() => onConfirm(tour.id)}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1.5 transition-all shadow-sm shadow-emerald-200"
-                  >
-                    <CheckCircle className="w-3.5 h-3.5" /> Confirm with Broker
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CommuteMapView({ listings }) {
+function CommuteMapView({ listings, preferences }) {
+  const destination = preferences?.officeCommute?.destination || '620 8th Ave, New York, NY';
+  const officeLimit = preferences?.officeCommute?.maxMinutes;
   const neighborhoods = [
     {
       name: "Hell's Kitchen",
@@ -740,7 +648,7 @@ function CommuteMapView({ listings }) {
           <Navigation className="w-6 h-6 text-blue-600" /> Target Workplace Commute Guide
         </h2>
         <p className="text-slate-500 text-sm mt-1">
-          Target: <b>Datadog Office (620 8th Ave, NYT Building, Manhattan)</b> • Direct access via Times Sq-42 St / Port Authority (A/C/E/1/2/3/7/N/Q/R/W)
+          Saved office destination: <b>{destination}</b>. Use an apartment’s Google commute lookup for a current estimate.
         </p>
       </div>
 
@@ -752,15 +660,16 @@ function CommuteMapView({ listings }) {
           </div>
           <div>
             <div className="text-xs uppercase tracking-widest text-indigo-200 font-bold">Commute Destination</div>
-            <div className="text-lg font-black">Datadog NYC Office (620 8th Ave @ 40th/41st St)</div>
-            <div className="text-xs text-indigo-100/80">Direct indoor subway portal from 8th Ave A/C/E concourse</div>
+            <div className="text-lg font-black">{destination}</div>
+            <div className="text-xs text-indigo-100/80">Weekday arrival target: 9:00 AM, New York time</div>
           </div>
         </div>
         <div className="text-xs bg-white/20 px-3 py-1.5 rounded-xl font-bold">
-          Max Commute Threshold: 40 mins
+          Office commute cap: {officeLimit == null ? 'Not set' : `${officeLimit} mins`}
         </div>
       </div>
 
+      <p className="text-sm text-slate-500">Reference guide below: AI estimates to 620 8th Avenue. These fixed neighborhood estimates are unverified and do not change with your saved office destination.</p>
       {/* NEIGHBORHOOD TRANSIT MATRIX */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {neighborhoods.map(nh => {
@@ -800,5 +709,5 @@ function CommuteMapView({ listings }) {
 }
 
 export default function Dashboard() {
-  return <GoogleCommuteProvider><App /></GoogleCommuteProvider>;
+  return <ProductProvider><GoogleCommuteProvider><App /></GoogleCommuteProvider></ProductProvider>;
 }

@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { migrateEvaluationQueue } = require('./evaluation_migration');
 const { migrateRentTerms } = require('./rent_migration');
 const { migrateCommute } = require('./commute_migration');
+const { migrateFeatures } = require('./feature_migration');
 
 const columns = {
     url: 'TEXT', title: 'TEXT', price: 'INTEGER', bedrooms: 'REAL', bathrooms: 'REAL',
@@ -69,6 +70,7 @@ async function migrate(query, engine) {
     await migrateEvaluationQueue(query, engine);
     await migrateRentTerms(query, engine);
     await migrateCommute(query, engine);
+    await migrateFeatures(query, engine);
     const { rows } = await query('SELECT id FROM listings WHERE id_hash IS NULL');
     for (const row of rows) await query('UPDATE listings SET id_hash = $1 WHERE id = $2', [crypto.createHash('md5').update(row.id).digest('hex'), row.id]);
 }

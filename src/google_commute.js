@@ -71,7 +71,7 @@ function parseRoute(data) {
         walkingSeconds: walks.some(s => s.durationSeconds === null) ? null : walks.reduce((sum, s) => sum + s.durationSeconds, 0),
         transfers: Math.max(0, transitCount - 1), walkingOnly: transitCount === 0 };
 }
-function createCommuteService({ allowance, client = createHttpsClient({ timeoutMs: 15000 }), env = process.env, now = Date.now } = {}) {
+function createCommuteService({ allowance, client = createHttpsClient({ timeoutMs: 15000 }), env = process.env, now = Date.now, destination = () => DESTINATION } = {}) {
     const inFlight = new Set();
     let localBlock = null, localPause = 0;
     const config = () => env.GOOGLE_MAPS_API_KEY?.trim() ? createHash('sha256')
@@ -94,6 +94,8 @@ function createCommuteService({ allowance, client = createHttpsClient({ timeoutM
             const state = await status();
             if (!state.available) throw new CommuteError(state.code, state.code === 'allowance_exhausted' || state.code === 'rate_limited' ? 429 : 503);
             const fingerprint = config();
+            const destinationAddress = destination();
+            if (typeof destinationAddress !== 'string' || !destinationAddress.trim() || destinationAddress.length > 300) throw new CommuteError('configuration_error');
             const arrivalTime = nextWeekdayArrival(now());
             if (!await allowance.reserve(fingerprint)) {
                 const current = await status();
@@ -106,7 +108,7 @@ function createCommuteService({ allowance, client = createHttpsClient({ timeoutM
                 response = await client.request('https://routes.googleapis.com/directions/v2:computeRoutes', {
                     method: 'POST', service: 'Google Routes', signal,
                     headers: { 'X-Goog-Api-Key': env.GOOGLE_MAPS_API_KEY, 'X-Goog-FieldMask': FIELD_MASK },
-                    json: { origin: { address: origin }, destination: { address: DESTINATION }, travelMode: 'TRANSIT',
+                    json: { origin: { address: origin }, destination: { address: destinationAddress }, travelMode: 'TRANSIT',
                         arrivalTime, computeAlternativeRoutes: false, languageCode: 'en-US', units: 'IMPERIAL' }
                 });
             } catch (error) {
@@ -124,7 +126,7 @@ function createCommuteService({ allowance, client = createHttpsClient({ timeoutM
                 throw new CommuteError(signal?.aborted ? 'cancelled' : error.code === 'request deadline exceeded or cancelled' ? 'timeout' : 'service_error', signal?.aborted ? 499 : 503);
             }
             if (signal?.aborted) throw new CommuteError('cancelled', 499);
-            return { route: parseRoute(response.data), origin, destination: DESTINATION,
+            return { route: parseRoute(response.data), origin, destination: destinationAddress,
                 requestedArrivalTime: arrivalTime, timeZone: TIME_ZONE, retrievedAt: new Date(now()).toISOString(),
                 attribution: 'Google Maps' };
         } catch (error) {

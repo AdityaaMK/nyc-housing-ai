@@ -22,13 +22,19 @@
     "gmail:authorize": "node scripts/gmail-authorize.js",
     "cloud:check": "node scripts/cloud-check.js",
     "db:migrate:https": "node scripts/migrate-https.js",
+    "db:migrate:features": "node scripts/migrate-product.js",
     "startup:install": "node scripts/macos/install.cjs",
     "startup:remove": "node scripts/macos/install.cjs --uninstall",
     "telegram:worker": "node src/telegram_worker.js",
     "telegram:start": "pm2 start ecosystem.telegram.config.cjs",
     "telegram:stop": "pm2 stop housing-telegram",
     "telegram:logs": "pm2 logs housing-telegram",
-    "telegram:status": "node src/telegram_worker.js --status"
+    "telegram:status": "node src/telegram_worker.js --status",
+    "inbox:worker": "node src/inbox_worker.js",
+    "inbox:start": "pm2 start ecosystem.inbox.config.cjs",
+    "inbox:stop": "pm2 stop housing-inbox",
+    "inbox:logs": "pm2 logs housing-inbox",
+    "inbox:status": "node src/inbox_worker.js --status"
   },
   "repository": {
     "type": "git",

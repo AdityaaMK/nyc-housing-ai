@@ -92,7 +92,8 @@ async function extractAgentContact(listing, page) {
     }
 }
 
-async function sendBrokerEmail({ to, subject, body }) {
+async function sendBrokerEmail({ to, subject, body, listingId = null, purpose = 'inquiry', operationId,
+    threadId, inReplyTo, references, tourId }) {
     const transport = getTransporter();
     const senderName = process.env.TENANT_NAME || "Adityaa Magesh Kumar";
     const senderEmail = mailBackend() === 'gmail-api' ? require('./gmail_api').getGmailClient().user : process.env.GMAIL_USER;
@@ -103,12 +104,16 @@ async function sendBrokerEmail({ to, subject, body }) {
         replyTo: senderEmail,
         bcc: senderEmail, // Keep a copy in your own inbox for tracking
         subject: subject,
-        text: body
+        text: body,
+        ...(threadId ? { threadId } : {}),
+        ...(inReplyTo ? { inReplyTo } : {}),
+        ...(references ? { references } : {})
     };
 
-    console.log(`📧 Sending direct email to: ${to} (Subject: "${subject}")`);
-    const info = await transport.sendMail(mailOptions);
-    console.log(`✅ Email sent successfully! MessageId: ${info.messageId}`);
+    const info = await require('./conversations').getConversationService().sendOutgoing({ listingId,
+        recipient: to, subject, body, purpose, operationId, sender: senderEmail, tourId },
+    headers => transport.sendMail({ ...mailOptions, ...headers }));
+    console.log('Broker email receipt saved to the conversation timeline.');
     return info;
 }
 

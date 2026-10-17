@@ -15,7 +15,7 @@ async function main() {
             const original = window.setInterval;
             window.setInterval = (fn, ms) => ms === 15000 ? (window.testTicks.push(fn), 12345) : original(fn, ms);
         });
-        let calls = 0, pending, failure = false, code = 'ready';
+        let calls = 0, pending, failure = false, code = 'ready', authenticatedLookups = 0, tourCalls = 0;
         const fixture = { origin: '975 Nostrand Avenue, Brooklyn, NY', destination: '620 8th Avenue, New York, NY 10018',
             requestedArrivalTime: '2026-10-13T13:00:00Z', retrievedAt: '2026-10-12T20:00:00Z', attribution: 'Google Maps',
             route: { durationSeconds: 1800, walkingSeconds: 300, transfers: 1, walkingOnly: false,
@@ -25,19 +25,29 @@ async function main() {
         page.on('request', async req => {
             const path = new URL(req.url()).pathname;
             if (!path.startsWith('/api/')) return req.continue();
-            const respond = (data, status = 200) => req.respond({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(data) });
-            if (path.endsWith('/commute')) { calls++; pending = () => respond(failure ? { code: 'unavailable', error: 'No Google Maps route is available.' } : fixture, failure ? 404 : 200); return; }
+            const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'Authorization,Content-Type', 'access-control-allow-methods': 'GET,POST,PUT,OPTIONS' };
+            if (req.method() === 'OPTIONS') return req.respond({ status: 204, headers });
+            const authenticated = req.headers().authorization === 'Bearer fixture-owner-token';
+            const respond = (data, status = 200) => req.respond({ status, contentType: 'application/json', headers, body: JSON.stringify(data) });
+            if (path === '/api/owner/session') return respond({ configured: true, authenticated });
+            if (path === '/api/tours') { tourCalls++; if (!authenticated) return respond({ error: 'Owner access required' }, 401); }
+            if (path.endsWith('/commute')) { calls++; if (!authenticated) return respond({ error: 'Owner access required' }, 401); authenticatedLookups++; pending = () => respond(failure ? { code: 'unavailable', error: 'No Google Maps route is available.' } : fixture, failure ? 404 : 200); return; }
             const data = {
                 '/api/listings': [true, false].map((available, i) => ({ id: String(i), title: available ? '975 Nostrand Avenue' : 'Address missing fixture',
                     status: 'inbox', price: 2500, bedrooms: 1, bathrooms: 1, commute_address_available: available,
                     commute_minutes: 99, commute_summary: 'Saved AI fixture', suitability_score: 88, evaluation_status: 'completed' })),
-                '/api/tours': [], '/api/stats': {}, '/api/preferences': { preferredNeighborhoods: [], includedAreas: [] },
+                '/api/tours': [], '/api/watchlist': { listings: [] }, '/api/stats': {}, '/api/preferences': { preferredNeighborhoods: [], includedAreas: [] },
                 '/api/commute/status': { configured: code !== 'unconfigured', available: code === 'ready', code, remaining: { daily: 300 - calls, rolling32Days: 9000 - calls } }
             };
             await respond(data[path] || {});
         });
         const url = 'http://127.0.0.1:' + server.httpServer.address().port;
         await page.goto(url);
+        await page.waitForFunction(() => document.body.innerText.includes('Get Google commute'));
+        assert.equal(tourCalls, 0, 'No protected tours while locked');
+        assert.equal(await page.$eval('section[aria-label="Google commute"] button', button => button.disabled), true, 'Paid commute is locked');
+        await page.type('[aria-label="Owner token"]', 'fixture-owner-token');
+        await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Unlock').click());
         await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === 'Get Google commute' && !b.disabled));
         const buttons = () => page.$$('section[aria-label="Google commute"] button');
         assert.equal(calls, 0); assert.equal(await (await buttons())[1].evaluate(b => b.disabled), true);
@@ -51,7 +61,7 @@ async function main() {
         const text = await page.$eval('body', e => e.innerText);
         for (const expected of ['Oct 13, 2026', '9:00 AM', 'EDT', '1 transfer', '5 stops', 'MTA', 'Saved AI fixture', '99m', '88', 'Google Maps']) assert.ok(text.includes(expected), expected);
         const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
-        assert.ok(!stored.includes('Station')); assert.ok(!stored.includes('duration'));
+        assert.ok(!stored.includes('fixture-owner-token')); assert.ok(!stored.includes('Station')); assert.ok(!stored.includes('duration'));
         await tick(); await delay(100); assert.equal(calls, 1); assert.ok((await page.$eval('body', e => e.innerText)).includes('Fixture Station'));
         failure = true; await (await buttons())[0].click(); await delay(100); await pending();
         await page.waitForFunction(() => document.body.innerText.includes('No Google Maps route'));
@@ -63,7 +73,7 @@ async function main() {
         code = 'ready'; await page.reload();
         await page.waitForFunction(() => document.body.innerText.includes('Get Google commute'));
         assert.ok(!(await page.$eval('body', e => e.innerText)).includes('Fixture Station'), 'Route does not survive reload');
-        assert.equal(calls, 2); assert.deepEqual(errors, []);
+        assert.equal(calls, 2); assert.equal(authenticatedLookups, 2); assert.equal(await page.$eval('section[aria-label="Google commute"] button', button => button.disabled), true, 'Reload locks the session'); assert.deepEqual(errors, []);
         console.log('Commute dashboard passed: click-only, duplicate prevention, loading, failures, disabled states, attribution, NY time, refresh and no storage.');
     } finally { await browser?.close(); await server.close(); }
 }

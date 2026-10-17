@@ -51,13 +51,21 @@ Unknown building health is displayed as unverified. Failed AI evaluations enter 
 
 ## Saved search locations
 
-`src/search_preferences.json` is the durable source of truth for location preferences, loaded each cycle/request and included in Docker images with `src/`. Preferred Manhattan neighborhoods: Lower East Side, Financial District, East Village, and Hell's Kitchen. Williamsburg is also saved. Listings in Queens, Brooklyn (including Williamsburg), Jersey City, and Hoboken qualify only with an estimated public-transit commute of at most 20 minutes from the apartment to any Manhattan arrival station, including walking, typical waits, and transfers. This is separate from the office commute to 620 8th Ave.
+Search settings now live in the shared database and can be edited in the dashboard. `src/search_preferences.json` seeds location defaults once. The defaults include Lower East Side, Financial District, East Village, Hell's Kitchen, and Williamsburg. Listings in Queens, Brooklyn (including Williamsburg), Jersey City, and Hoboken qualify only with an estimated public-transit commute of at most 20 minutes from the apartment to any Manhattan arrival station, including walking, typical waits, and transfers. This remains separate from the editable office destination and commute limit.
 
 The evaluator stores a separate Manhattan-arrival time, station, and route. Unknown/missing estimates or routes fail the regional preference check, including older listings until they are re-evaluated. The cutoff is enforced after score bonuses, again before notifications, and in the dashboard's saved-search filter. Location and commute extraction still use AI estimates, not independently verified geocoding or live transit routing.
 
-Scrapers collect regional candidates; the evaluator verifies their borough/city, and alerts enforce the saved locations regardless of score bonuses. The dashboard defaults to saved search areas and remembers its display filter independently. Historical listings are retained under All collected listings. Budgets and the commute destination are unchanged. StreetEasy and Compass cover all five regions; RentHop covers Manhattan, Brooklyn, Queens, and Jersey City. Unknown locations cannot trigger an alert. NYC building-health checks use the actual borough; New Jersey health stays unverified.
+Scrapers collect regional candidates; the evaluator verifies their borough/city, and alerts enforce saved locations, room requirements, budgets, and commute rules. The dashboard defaults to saved search areas and remembers its display filter independently. Historical listings are retained under All collected listings. StreetEasy and Compass cover all five regions; RentHop covers Manhattan, Brooklyn, Queens, and Jersey City. Unknown locations cannot trigger an alert. NYC building-health checks use the actual borough; New Jersey health stays unverified.
 
-Restart the daemon and API once after installing this code. Subsequent edits to the preference JSON are read without a restart. Previously processed listings are not automatically re-notified.
+Restart the API and any enabled workers after installing the schema and code. Subsequent dashboard settings changes take effect on the next request or worker cycle. Scores from earlier preference revisions are labeled outdated and enter the existing scoring queue in bounded batches. Existing delivery receipts are preserved.
+
+## Apartment selection and tour workspace
+
+The dashboard now includes all ten features in the [implementation roadmap](docs/roadmap.md): source freshness and availability, rent history and change alerts, worker health, editable search settings, watchlists and comparison, housing costs, conversation history, tour scheduling and reminders, tour-day routing, and post-tour reviews with decision history.
+
+Set `HOUSING_OWNER_TOKEN` to a random secret of at least 24 characters, then unlock owner access in the dashboard. Listings, search settings, source evidence, and sanitized health remain readable; private conversations, schedules, notes, comparisons, and all mutations require owner access. The token stays in page memory. Existing status changes, broker confirmation, and paid Google lookups also require this token.
+
+SQLite installs the additive feature schema during startup. PostgreSQL/Supabase upgrades need migration `003_product_features.sql` after the existing scoring and commute migrations. See [feature setup, migration, behavior, and verification](docs/product-features.md). Installing this code does not start workers or send messages.
 
 ## Durable scoring worker
 
@@ -91,7 +99,7 @@ Budget checks use net effective rent over the initial lease: `(gross rent × (le
 
 Commute routes remain unverified AI estimates, and listing pages can change prices between collection and evaluation. No additional scoring requests were made to investigate these findings.
 
-Listing cards with a usable street address and known borough/city provide a “Check office commute in Google Maps” transit link. It uses `TARGET_COMMUTE_ADDRESS` (default: 620 8th Avenue, New York) and requires no Maps API key. Confirm the origin and set a weekday arrival time in Maps. Opening the link does not automatically verify the saved AI estimate or change the listing's score. The optional **Get Google commute** button requests a Google Maps transit estimate arriving at 9:00 AM next weekday, only when clicked. It requires a private `GOOGLE_MAPS_API_KEY`, keeps results in page memory, and caps attempted requests at 300 per New York day and 9,000 per rolling 32 days. Saved scores and AI estimates stay unchanged. See [setup, migration, usage controls and tests](docs/google-commute.md).
+Listing cards with a usable street address and known borough/city provide a “Check office commute in Google Maps” transit link. It uses the saved office destination, initially seeded from `TARGET_COMMUTE_ADDRESS` (default: 620 8th Avenue, New York), and requires no Maps API key. Confirm the origin and set a weekday arrival time in Maps. Opening the link does not automatically verify the saved AI estimate or change the listing's score. The optional **Get Google commute** button requests a Google Maps transit estimate arriving at 9:00 AM next weekday, only when clicked. It requires a private `GOOGLE_MAPS_API_KEY`, keeps results in page memory, and caps attempted requests at 300 per New York day and 9,000 per rolling 32 days. Saved scores and AI estimates stay unchanged. See [setup, migration, usage controls and tests](docs/google-commute.md).
 
 ## HTTPS cloud backends
 
@@ -100,6 +108,8 @@ For Supabase REST and Gmail API setup, local OAuth authorization, read-only diag
 ## Persistent Telegram worker
 
 `npm run telegram:start` launches the independent, supervised `housing-telegram` worker; `npm run telegram:status` checks its persistent heartbeat and delivery journal. It handles Telegram buttons and new listing alerts, summarizes the initial backlog once, and recovers from polling failures and process crashes. Use one deployment with persistent storage. See [Telegram setup, recovery, and host requirements](docs/telegram-worker.md) before enabling it alongside existing processes.
+
+`npm run inbox:start` launches the independent `housing-inbox` worker for broker replies, tour proposals, and follow-up prompts. It saves progress and queues alerts while Telegram is stopped; the existing Telegram worker delivers them when available. `npm run inbox:status` reports inbox health and queued work. See [Inbox setup, shared state, and recovery](docs/inbox-worker.md). This replaces the old combined daemon's inbox/nudge scans for that mailbox.
 
 ## macOS automatic startup and wake recovery
 

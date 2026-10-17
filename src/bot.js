@@ -107,7 +107,14 @@ function setupBotHandlers(botInstance, { chatId = process.env.TELEGRAM_CHAT_ID }
 
         console.log(`🔘 Received Telegram callback: "${callbackData}" from user: ${ctx.from?.username || ctx.from?.id}`);
 
-        if (callbackData.startsWith("pass_")) {
+        if (callbackData.startsWith('save_') || callbackData.startsWith('unsave_')) {
+            try {
+                const saved = callbackData.startsWith('save_');
+                const actionId = callbackData.slice(saved ? 5 : 7);
+                await require('./product_services').getProductServices().selection.setWatchlist(actionId, saved);
+                await ctx.answerCallbackQuery({ text: saved ? 'Saved to your watchlist.' : 'Removed from your watchlist.' });
+            } catch { await ctx.answerCallbackQuery({ text: 'Could not update the watchlist. Try again.' }); }
+        } else if (callbackData.startsWith("pass_")) {
             const actionId = callbackData.replace("pass_", "");
             try {
                 await repository.passListing(actionId);

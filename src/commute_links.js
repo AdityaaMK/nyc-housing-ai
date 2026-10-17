@@ -1,4 +1,4 @@
-const { locationArea } = require('./preferences');
+const { locationArea, loadPreferences } = require('./preferences');
 
 // Maps URLs open the transit planner; they do not verify or alter a saved estimate.
 function commuteMapsUrl(listing) {
@@ -8,7 +8,8 @@ function commuteMapsUrl(listing) {
     if (!area || !/^\d+[A-Z]?(?:[-/]\d+)?\s/i.test(address) ||
         !/\b(?:street|st|avenue|ave|boulevard|blvd|road|rd|drive|dr|lane|ln|place|pl|court|ct|terrace|way|broadway)\b/i.test(address)) return null;
     const state = ['Jersey City', 'Hoboken'].includes(area) ? 'NJ' : 'NY';
-    const configured = process.env.TARGET_COMMUTE_ADDRESS?.trim();
+    const preferences = loadPreferences();
+    const configured = preferences.revision > 0 ? preferences.officeCommute?.destination : process.env.TARGET_COMMUTE_ADDRESS?.trim();
     const destination = !configured || configured === 'Datadog Office (620 8th Ave, NYT Building, NYC)'
         ? '620 8th Avenue, New York, NY 10018' : configured;
     const url = new URL('https://www.google.com/maps/dir/');
