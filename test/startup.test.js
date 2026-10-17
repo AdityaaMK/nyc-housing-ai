@@ -62,11 +62,11 @@ test('launch-agent generation is portable and safely escapes paths', () => {
     assert.equal(paths.label, 'com.tenant.nyc-housing-ai');
 });
 
-test('saved Telegram and scoring workers recover with their restart settings', async () => {
-    const apps = ['housing-telegram', 'housing-scorer'].map(name => ({ ...saved[0], name,
+test('saved Telegram, inbox and scoring workers recover with their restart settings', async () => {
+    const apps = ['housing-telegram', 'housing-scorer', 'housing-inbox'].map(name => ({ ...saved[0], name,
         min_uptime: 0, exp_backoff_restart_delay: 1000 }));
     const actions = await recovery([], apps);
-    assert.deepEqual(actions.map(action => action[1].name), ['housing-telegram', 'housing-scorer']);
+    assert.deepEqual(actions.map(action => action[1].name), ['housing-telegram', 'housing-scorer', 'housing-inbox']);
     assert.equal(actions[0][1].min_uptime, 0);
     assert.equal(actions[0][1].exp_backoff_restart_delay, 1000);
 });

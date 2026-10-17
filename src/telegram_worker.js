@@ -15,9 +15,13 @@ const retryDelay = (error, attempts = 1) => {
 };
 
 async function notificationCycle({ state, repository, api, chatId, signal, now = Date.now,
-    preferences = loadPreferences(), batchSize = 3, wait = sleep }) {
+    preferences, batchSize = 3, wait = sleep, inboxBridge, productBridge }) {
+    inboxBridge?.importInto(state);
+    await productBridge?.importInto(state);
     const { rows } = await repository.pendingNotifications();
-    const matches = rows.filter(row => eligibleForAlert(row, preferences));
+    preferences ||= loadPreferences();
+    const listingsWithState = productBridge ? await productBridge.enrichListings(rows) : rows;
+    const matches = listingsWithState.filter(row => eligibleForAlert(row, preferences));
     const current = new Map(matches.map(row => [row.id, row]));
     state.enqueue(matches, now());
     let sent = 0;
@@ -26,15 +30,25 @@ async function notificationCycle({ state, repository, api, chatId, signal, now =
         if (delivery.status === 'sent') {
             // A receipt is committed locally before the remote notified flags. If
             // the database is down, resume this acknowledgement without resending.
-            for (const id of delivery.listing_ids) await repository.markNotified(id);
+            await acknowledgeDelivery(delivery, repository);
             state.finish(delivery.id);
             continue;
         }
         if (sent >= batchSize || state.get('send_pause_until', 0) > now()) continue;
-        const listings = delivery.listing_ids.map(id => current.get(id)).filter(Boolean);
-        if (!listings.length) { state.finish(delivery.id, 'cancelled'); continue; }
-        const payload = delivery.id === 'backlog' ? buildBacklogAlert(listings) : buildListingAlert({ ...listings[0], is_preferred: true });
-        const ids = listings.map(l => l.id);
+        let payload, ids = [];
+        if (delivery.kind === 'listing') {
+            const listings = delivery.listing_ids.map(id => current.get(id)).filter(Boolean);
+            if (!listings.length) { state.finish(delivery.id, 'cancelled'); continue; }
+            payload = delivery.id === 'backlog' ? buildBacklogAlert(listings) : buildListingAlert({ ...listings[0], is_preferred: true });
+            ids = listings.map(l => l.id);
+        } else {
+            const prepared = ['price_change', 'tour_reminder', 'application_reminder'].includes(delivery.kind) ? await productBridge?.prepare(delivery) : null;
+            const eligibility = prepared?.status || (['price_change', 'tour_reminder', 'application_reminder'].includes(delivery.kind) ? 'wait' :
+                await eventEligibility(delivery, repository, inboxBridge, now(), productBridge));
+            if (eligibility === 'wait') continue;
+            if (eligibility === 'cancel') { state.finish(delivery.id, 'cancelled'); continue; }
+            payload = prepared?.payload || delivery.payload;
+        }
         state.preparing(delivery.id, ids);
         let receipt;
         try {
@@ -59,11 +73,29 @@ async function notificationCycle({ state, repository, api, chatId, signal, now =
         state.sent(delivery.id, receipt.message_id);
         state.set('last_delivery_at', now());
         sent++;
-        for (const id of ids) await repository.markNotified(id);
+        await acknowledgeDelivery({ ...delivery, listing_ids: ids }, repository);
         state.finish(delivery.id);
         await wait(1100, signal);
     }
     return { matching: matches.length, sent };
+}
+
+async function acknowledgeDelivery(delivery, repository) {
+    if (delivery.kind === 'nudge') await repository.markNudgeNotified(delivery.reference.listingId);
+    for (const id of delivery.listing_ids) await repository.markNotified(id);
+}
+
+async function eventEligibility(delivery, repository, inboxBridge, at, productBridge) {
+    if (delivery.kind === 'tour') {
+        if (productBridge && !await productBridge.tourInvitationCurrent(delivery.reference.tourId)) return 'cancel';
+        const tour = (await repository.getTour(delivery.reference.tourId)).rows[0];
+        return !tour || tour.status === 'confirmed' || Date.parse(tour.proposed_datetime) < at ? 'cancel' : 'ready';
+    }
+    const listing = (await repository.getListing(delivery.reference.listingId)).rows[0];
+    if (!listing || listing.status !== 'applied' || listing.nudge_notified || Number(listing.nudge_count) > 0 ||
+        Date.parse(listing.applied_at) !== delivery.reference.appliedAt ||
+        String(listing.broker_email || '').trim().toLowerCase() !== delivery.reference.sender) return 'cancel';
+    return inboxBridge?.nudgeStatus(delivery.reference) || 'wait';
 }
 
 async function pollOnce({ api, bot, state, signal, now = Date.now }) {
@@ -84,12 +116,15 @@ async function pollOnce({ api, bot, state, signal, now = Date.now }) {
 }
 
 async function runTelegramWorker({ api, bot, state, repository, chatId, signal, now = Date.now,
-    wait = sleep, log = console.log, intervalMs = 30000, onStall = () => process.exit(1) }) {
+    wait = sleep, log = console.log, intervalMs = 30000, onStall = () => process.exit(1), inboxBridge, productBridge, onHeartbeat }) {
     let polling = false, notifying = false, pollStarted = now(), notifyStarted = now();
     let lastPoll = 0, pollError = null, notifyError = null;
-    const heartbeat = () => state.set('heartbeat', { at: now(), pid: process.pid, status: signal.aborted ? 'stopping' : 'running',
+    const heartbeat = () => { const snapshot = { at: now(), pid: process.pid, status: signal.aborted ? 'stopping' : 'running',
         lastPollAt: state.get('last_poll_at'), lastDeliveryAt: state.get('last_delivery_at'),
-        pollError, notifyError, lastAction: state.get('last_action') });
+        pollError, notifyError, lastAction: state.get('last_action') };
+        state.set('heartbeat', snapshot);
+        if (onHeartbeat) void Promise.resolve(onHeartbeat(snapshot)).catch(() => {});
+    };
     heartbeat();
     const timer = setInterval(() => {
         heartbeat();
@@ -126,7 +161,7 @@ async function runTelegramWorker({ api, bot, state, repository, chatId, signal, 
             try {
                 // Do not send if another poller owns the bot or polling is down.
                 if (lastPoll && now() - lastPoll < 60000) {
-                    const result = await notificationCycle({ state, repository, api, chatId, signal, now, wait });
+                    const result = await notificationCycle({ state, repository, api, chatId, signal, now, wait, inboxBridge, productBridge });
                     notifyError = null;
                     if (result.sent) log(`Telegram delivery confirmed: ${result.sent} message(s).`);
                 }
@@ -163,7 +198,7 @@ async function main(args = process.argv.slice(2)) {
     const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN, { timeoutMs: 30000, maxRetries: 0,
         fetch: (url, init) => fetch(url, { ...init, dispatcher, redirect: 'error',
             signal: AbortSignal.any([controller.signal, ...(init.signal ? [init.signal] : [])]) }) });
-    let state;
+    let state, health;
     const { initDB, pool } = require('./db');
     try {
         const self = await bot.api.getMe(controller.signal);
@@ -173,18 +208,26 @@ async function main(args = process.argv.slice(2)) {
             pool.backend, process.env.SUPABASE_URL || process.env.DATABASE_URL || process.env.SQLITE_PATH || 'default'])).digest('hex');
         state = openState(stateFile(), identity);
         await initDB();
+        const products = require('./product_services').getProductServices();
+        await products.store.verify();
+        const productBridge = require('./product_events').createProductEventBridge(products);
+        health = require('./health_service').createWorkerReporter('telegram');
         require('./bot').setupBotHandlers(bot);
         bot.command(['start', 'status'], async ctx => {
             if (String(ctx.chat?.id) !== process.env.TELEGRAM_CHAT_ID) return;
             await ctx.reply('Housing alerts are running. New matches are checked every 30 seconds.');
         });
         const { repository } = require('./repository');
+        const inbox = require('./inbox_state');
+        const inboxBridge = inbox.createInboxBridge(inbox.stateFile(), inbox.inboxIdentity(pool.backend));
         console.log('Telegram worker ready; polling and notifications supervised.');
-        await runTelegramWorker({ api: bot.api, bot, state, repository, chatId: process.env.TELEGRAM_CHAT_ID, signal: controller.signal });
+        await runTelegramWorker({ api: bot.api, bot, state, repository, chatId: process.env.TELEGRAM_CHAT_ID, signal: controller.signal, inboxBridge, productBridge,
+            onHeartbeat: value => health.report({ status: value.status, lastSuccessAt: value.lastPollAt, error: value.pollError || value.notifyError }) });
     } finally {
         shutdown();
         state?.set('heartbeat', { ...(state.get('heartbeat') || {}), at: Date.now(), status: 'stopped' });
         state?.close();
+        await health?.stop();
         await pool.end(); await dispatcher.close();
         clearTimeout(hardStop);
         process.removeListener('SIGINT', shutdown); process.removeListener('SIGTERM', shutdown);

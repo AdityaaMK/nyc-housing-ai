@@ -96,6 +96,7 @@ test('repository preserves conflicts, affected rows, nulls, flags, tours, dedupl
     assert.deepEqual(JSON.parse(listing.cross_posted_sources).map(s => s.url).sort(), ['url1', 'url2']);
     await repo.markApplied('a'); await repo.setBrokerEmail('a', 'broker@example.test'); await repo.recordNudge('a');
     listing = (await repo.getListing('a')).rows[0]; assert.equal(listing.status, 'applied'); assert.equal(listing.nudge_count, 1);
+    assert.deepEqual((await repo.inboxInquiries()).rows.map(row => row.id), ['a']);
     assert.ok(listing.applied_at); await repo.markNotified('a'); assert.equal((await repo.getListing('a')).rows[0].is_notified, 1);
     assert.equal((await repo.saveTour({ id: 'tour', proposed_datetime: null, proposed_time: 'TBD' })).rowCount, 1);
     assert.equal((await repo.saveTour({ id: 'tour', proposed_time: 'overwrite' })).rowCount, 0);
@@ -119,6 +120,14 @@ test('cloud diagnostic only reads schema/tables and verifies mailbox identity', 
         rest: async (table, options) => { assert.equal(options.method, undefined); assert.equal(options.params.limit, 1); operations.push(table); return { data: [] }; }
     }, gmail: { verifyIdentity: async () => operations.push('identity') } });
     assert.deepEqual(operations, ['schema', 'listings', 'tour_schedules', 'identity']); assert.equal(report.databaseReads, 'ok');
+});
+test('Supabase inbox inquiry scan includes all applied contacts without the legacy five-row cap', async () => {
+    const expected = Array.from({ length: 12 }, (_, i) => ({ id: String(i) }));
+    const repo = createSupabaseRepository({ readAll: async (table, params) => {
+        assert.equal(table, 'listings'); assert.equal(params.status, 'eq.applied');
+        assert.equal(params.broker_email, 'not.is.null'); assert.equal(params.limit, undefined); return expected;
+    } });
+    assert.deepEqual((await repo.inboxInquiries()).rows, expected);
 });
 test('Supabase normalization preserves PostgreSQL dashboard timestamps, booleans, nulls and decimal strings', () => {
     const { normalizeRow } = require('../src/supabase_client');

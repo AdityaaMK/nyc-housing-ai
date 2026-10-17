@@ -6,29 +6,12 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Api } = require("node-telegram-bot-api");
 const { sendBrokerEmail } = require("./mailer");
 const crypto = require("crypto");
+const { generateGoogleCalendarUrl } = require('./inbox_messages');
 
 
 let processedEmailIds = new Set();
 
-function generateGoogleCalendarUrl({ title, startTime, endTime, location, details }) {
-    // Format YYYYMMDDTHHMMSSZ
-    function formatTime(d) {
-        return d.toISOString().replace(/-|:|\.\d+/g, "");
-    }
-
-    const start = formatTime(startTime);
-    const end = formatTime(endTime);
-
-    const base = "https://calendar.google.com/calendar/render?action=TEMPLATE";
-    const text = encodeURIComponent(`Apartment Tour: ${title}`);
-    const dates = `${start}/${end}`;
-    const loc = encodeURIComponent(location || "New York, NY");
-    const det = encodeURIComponent(details || "NYC Housing AI Scheduled Tour");
-
-    return `${base}&text=${text}&dates=${dates}&details=${det}&location=${loc}`;
-}
-
-async function analyzeInboundEmail(subject, from, bodyText, receivedAt = new Date().toISOString()) {
+async function analyzeInboundEmail(subject, from, bodyText, receivedAt = new Date().toISOString(), { quiet = false } = {}) {
     if (!process.env.GEMINI_API_KEY) {
         return null;
     }
@@ -64,7 +47,7 @@ Output a JSON object with the following exact keys:
         const result = await model.generateContent(prompt);
         return JSON.parse(result.response.text());
     } catch (err) {
-        console.error("AI Inbound Email Parse Error:", err.message);
+        if (!quiet) console.error('AI inbound email parse failed; retry later.');
         return null;
     }
 }
@@ -189,34 +172,53 @@ async function checkInboundReplies(botApi, chatId, { connect = openMailbox, anal
     }
 }
 
-async function confirmTourBooking(tourId) {
+async function confirmTourBooking(tourId, { repository: repo = repository, store, planner, send = sendBrokerEmail, now = Date.now, expectedRevision } = {}) {
     try {
-        const res = await repository.getTour(tourId);
+        const res = await repo.getTour(tourId);
         const tour = res.rows[0];
         if (!tour) return { success: false, reason: "Tour schedule record not found" };
 
-        if (tour.status === "confirmed") return { success: true, tour };
+        store ||= require('./feature_store').createFeatureStore();
+        planner ||= require('./tour_planner').createTourPlanner({ store, repository: repo, now });
+        const schedule = await planner.getSchedule(tourId);
+        if (expectedRevision !== undefined && schedule.revision !== expectedRevision) return { success: false, reason: 'The tour changed. Review the current schedule before confirming.' };
+        if (['cancelled', 'completed'].includes(schedule.status)) return { success: false, reason: 'This tour is cancelled or completed.' };
+        if (schedule.status === 'confirmed') { await repo.confirmTour(tourId); return { success: true, tour, schedule }; }
+        if (!schedule.startsAt || Date.parse(schedule.startsAt) <= now()) return { success: false, reason: 'Choose a specific future date and time before confirming the tour.' };
 
-        if (!tour.broker_email) {
+        if (!schedule.brokerEmail) {
             return { success: false, reason: "Broker email address unknown" };
         }
 
-        const subject = `Confirmed: Apartment Tour for ${tour.listing_address} - Adityaa Magesh Kumar`;
+        const selectedTime = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' }).format(new Date(schedule.startsAt));
+        const subject = `Confirmed: Apartment Tour for ${schedule.address} - Adityaa Magesh Kumar`;
         const body = `Hi ${tour.broker_name || ""},\n\n` +
-                     `Thank you for getting back to me! ${tour.proposed_time} works perfectly for me. I look forward to viewing the apartment.\n\n` +
+                     `Thank you for getting back to me! ${selectedTime} (New York time) works perfectly for me. I look forward to viewing ${schedule.address}.\n\n` +
                      `If there are any gate codes or entry instructions needed upon arrival, please let me know.\n\n` +
                      `Best regards,\n` +
                      `Adityaa Magesh Kumar\n` +
                      `adityaa.magesh@gmail.com | 732-309-5089`;
 
-        await sendBrokerEmail({
-            to: tour.broker_email,
+        const conversation = schedule.conversationId ? await store.get('conversation_messages', schedule.conversationId) : null;
+        await send({
+            to: schedule.brokerEmail,
+            listingId: schedule.listingId,
+            tourId, purpose: 'tour_confirmation', operationId: `tour:${tourId}:${schedule.revision}`,
+            threadId: conversation?.data.threadId,
+            inReplyTo: conversation?.data.rfcMessageId,
+            references: [...(conversation?.data.references || []), ...(conversation?.data.rfcMessageId ? [conversation.data.rfcMessageId] : [])],
             subject,
             body
         });
 
-        await repository.confirmTour(tourId);
-        return { success: true, tour };
+        let confirmed;
+        try { confirmed = await planner.updateSchedule(tourId, { expectedRevision: schedule.revision, status: 'confirmed' }); }
+        catch (error) {
+            if (error.status === 409) return { success: false, emailSent: true, reason: 'The confirmation email was sent, but the schedule changed meanwhile. Review the current tour before making another change.' };
+            throw error;
+        }
+        await repo.confirmTour(tourId);
+        return { success: true, tour, schedule: confirmed };
     } catch (err) {
         console.error("Error confirming tour booking:", err.message);
         return { success: false, reason: err.message };

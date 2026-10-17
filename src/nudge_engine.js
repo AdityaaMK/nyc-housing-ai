@@ -49,6 +49,7 @@ async function checkPendingNudges(botApi, chatId) {
         console.log(`⏰ [Nudge Engine] Found ${pending.length} listing(s) pending broker follow-up.`);
 
         for (const listing of pending) {
+            if (await require('./conversations').getConversationService().followUpStatus(listing.id, listing.broker_email, Date.parse(listing.applied_at)) === 'cancel') continue;
             const actionId = listing.id_hash || 
                 (listing.id.length > 50 ? crypto.createHash("md5").update(listing.id).digest("hex") : listing.id);
 
@@ -91,9 +92,16 @@ async function sendNudge(actionId) {
             return { success: false, reason: "No broker email recorded for this listing." };
         }
 
+        if (await require('./conversations').getConversationService().followUpStatus(listing.id, brokerEmail, Date.parse(listing.applied_at)) === 'cancel') {
+            return { success: false, reason: 'A broker reply is already recorded. Review the conversation before following up.' };
+        }
+
         const { subject, body } = generateNudgeEmail(listing);
 
         await sendBrokerEmail({
+            listingId: listing.id,
+            purpose: 'follow_up',
+            operationId: `follow_up:${listing.id}:${listing.applied_at}`,
             to: brokerEmail,
             subject,
             body

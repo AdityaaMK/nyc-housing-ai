@@ -1,6 +1,6 @@
-const { repository } = require('./repository');
-const { pool } = require("./db");
-const { normalizeAddress, checkOrRecordDuplicate } = require("./normalizer");
+const { randomUUID } = require('node:crypto');
+const { normalizeAddress } = require("./normalizer");
+const { defaultListingInsights, ingestObservedListing, classifyScan } = require("./listing_insights");
 
 const { getSearchFeeds } = require('./search_feeds');
 const { scopedAddress } = require('./preferences');
@@ -8,14 +8,19 @@ const { scopedAddress } = require('./preferences');
 async function scrapeRentHop(browser) {
     let totalNew = 0;
     const page = await browser.newPage();
+    const insights = defaultListingInsights();
     
     try {
         for (const feed of getSearchFeeds('renthop')) {
             console.log(`📡 [RentHop] Checking feed: ${feed.name}...`);
+            const started_at = new Date().toISOString(), scanId = randomUUID();
+            let parsedCount = 0, observationCount = 0;
             try {
-                await page.goto(feed.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+                const response = await page.goto(feed.url, { waitUntil: "domcontentloaded", timeout: 30000 });
                 
-                const rawListings = await page.evaluate(() => {
+                const html = await page.content();
+                const blocked = classifyScan({ html, status: response?.status?.() || 200, parsedCount: 1 }) === "blocked";
+                const rawListings = blocked ? [] : await page.evaluate(() => {
                     const items = [];
                     document.querySelectorAll(".search-listing").forEach(el => {
                         const link = el.querySelector("a[href*=\"/listings/\"]");
@@ -64,9 +69,9 @@ async function scrapeRentHop(browser) {
                     return items;
                 });
 
+                parsedCount = rawListings.length;
                 for (const item of rawListings) {
                     const { beds, baths, price, url } = item;
-                    if (!feed.match(beds, baths, price)) continue;
 
                     // Parse slug from URL to extract clean address and unit
                     let normalizedAddress = null;
@@ -91,29 +96,17 @@ async function scrapeRentHop(browser) {
                     const numericId = url.split("/").pop();
                     const id = `renthop_${numericId}`;
 
-                    // Check for cross-site duplicate
-                    const duplicate = await checkOrRecordDuplicate(pool, {
-                        normalizedAddress,
-                        newUrl: url,
-                        newSource: "renthop"
-                    });
-
-                    if (duplicate) {
-                        // Already exists (from StreetEasy or RentHop), skip creating duplicate
-                        continue;
-                    }
-
-                    // Check if already in DB by ID
-                    const existingById = await repository.listingExists(id);
-                    if (existingById.rows.length === 0) {
-                        const inserted = await repository.insertListing({ id, url, title: displayTitle, price, bedrooms: beds, bathrooms: baths, source: "renthop", normalized_address: normalizedAddress, location_area: feed.area });
-                        if (!inserted.rowCount) continue;
-                        console.log(`🎉 NEW CANDIDATE [RentHop]: ${displayTitle} | $${price || "?"} | ${beds} Bed / ${baths} Bath | Key: ${normalizedAddress}`);
-                        totalNew++;
-                    }
+                    const result = await ingestObservedListing({ listing: { id, url, title: displayTitle, price, bedrooms: beds,
+                        bathrooms: baths, source: 'renthop', normalized_address: normalizedAddress, location_area: feed.area },
+                        matchesFeed: feed.match(beds, baths, price), insights, scanId });
+                    if (result.observed) observationCount++;
+                    if (result.inserted) totalNew++;
                 }
+                await insights.recordScan({ id: scanId, source: 'renthop', feed_url: feed.url, started_at, html,
+                    status: response?.status?.() || 200, parsedCount, observationCount });
             } catch (err) {
-                console.error(`Error scraping RentHop feed ${feed.name}:`, err.message);
+                await insights.recordScan({ id: scanId, source: 'renthop', feed_url: feed.url, started_at, outcome: 'failed', parsedCount, observationCount });
+                console.error(`Error scraping RentHop feed ${feed.name}:`, 'source request or persistence failure');
             }
             await new Promise(r => setTimeout(r, 1000));
         }

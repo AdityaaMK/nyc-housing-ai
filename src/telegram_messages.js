@@ -1,9 +1,9 @@
 const crypto = require('node:crypto');
-const { matchesLocation } = require('./preferences');
+const { matchesPreferences, loadPreferences } = require('./preferences');
 
 function eligibleForAlert(listing, preferences) {
     return listing.status === 'inbox' && Number(listing.suitability_score) >= 75 &&
-        Number(listing.price) >= 1800 && matchesLocation(listing, preferences);
+        !listing.score_outdated && !listing.assessment_outdated && listing.availability !== 'unavailable' && matchesPreferences(listing, preferences);
 }
 
 function buildListingAlert(listing) {
@@ -35,9 +35,10 @@ function buildListingAlert(listing) {
     const sourceName = ({ renthop: "RentHop", compass: "Compass", streeteasy: "StreetEasy" })[listing.source] || "Listing";
     const sourceBadge = `\n🌐 <b>Source:</b> ${sourceName}`;
 
+    const office = esc(String(loadPreferences().officeCommute?.destination || '620 8th Ave').slice(0, 100));
     const commuteInfo = listing.commute_summary
-        ? `\n🚇 <b>AI commute estimate to 620 8th Ave:</b> ${esc(listing.commute_summary)}`
-        : (listing.commute_minutes ? `\n🚇 <b>AI commute estimate to 620 8th Ave:</b> ~${listing.commute_minutes} mins` : "");
+        ? `\n🚇 <b>AI commute estimate to ${office}:</b> ${esc(listing.commute_summary)}`
+        : (listing.commute_minutes ? `\n🚇 <b>AI commute estimate to ${office}:</b> ~${listing.commute_minutes} mins` : "");
 
     const manhattanCommute = listing.manhattan_commute_summary
         ? '\n🚉 <b>AI estimate to Manhattan:</b> ' + listing.manhattan_commute_minutes + ' min to ' + esc(listing.manhattan_arrival_station) + ' — ' + esc(listing.manhattan_commute_summary) : '';
@@ -85,6 +86,10 @@ function buildListingAlert(listing) {
         }
     } catch(e) {}
 
+    inlineButtons.push([
+        { text: '⭐ Save apartment', callback_data: `save_${actionId}` },
+        { text: 'Remove saved', callback_data: `unsave_${actionId}` }
+    ]);
     inlineButtons.push([
         { text: "✉️ Send Intro Packet", callback_data: `apply_${actionId}` },
         { text: "❌ Pass", callback_data: `pass_${actionId}` }

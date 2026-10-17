@@ -12,8 +12,29 @@ const { readStatus } = require('../src/telegram_state');
 const root = path.resolve(__dirname, '..');
 const preload = path.join(dir, 'fixtures.cjs');
 const stateDir = path.join(dir, 'state');
+const healthFile = path.join(dir, 'health.json');
 const script = `
+    const fs = require('node:fs');
     const mock = (name, exports) => { require.cache[require.resolve(name)] = { exports }; };
+    mock(${JSON.stringify(require.resolve('dotenv'))}, { config() {} });
+    const noNetwork = { request:async()=>{throw new Error('Unexpected network request in recovery fixture');}, close:async()=>{} };
+    mock(${JSON.stringify(require.resolve('../src/https_client'))}, { httpsClient:noNetwork,
+        createHttpsClient:()=>noNetwork, createDispatcher:()=>({close:async()=>{}}) });
+    const fixtureStore = {
+        verify:async()=>{}, list:async()=>[],
+        async update(collection,id,transform) {
+            if (collection !== 'worker_health') throw new Error('Unexpected fixture write');
+            const filename = ${JSON.stringify(healthFile)};
+            const previous = fs.existsSync(filename) ? JSON.parse(fs.readFileSync(filename)) : null;
+            const record = {collection,id,data:transform(previous?.data),revision:(previous?.revision||0)+1};
+            fs.writeFileSync(filename+'.tmp',JSON.stringify(record)); fs.renameSync(filename+'.tmp',filename); return record;
+        }
+    };
+    mock(${JSON.stringify(require.resolve('../src/feature_store'))}, { featureStore:fixtureStore, createFeatureStore:()=>fixtureStore });
+    mock(${JSON.stringify(require.resolve('../src/product_services'))}, { getProductServices:()=>({
+        store:fixtureStore, preferences:{get:async()=>require(${JSON.stringify(require.resolve('../src/preferences'))}).loadPreferences()},
+        tours:{queueDueReminders:async()=>({queued:0})}, enrichListings:async rows=>rows
+    }) });
     mock(${JSON.stringify(require.resolve('node-telegram-bot-api'))}, { Bot: class {
         constructor() { this.api = {
             getMe: async () => ({id:123}), getWebhookInfo: async () => ({}),
@@ -47,13 +68,17 @@ async function healthy(differentPid = 0) {
         await call('start', { ...require('../ecosystem.telegram.config.cjs').apps[0],
             name: 'telegram-recovery-fixture', cwd: root, node_args: ['--require', preload],
             env: { TELEGRAM_BOT_TOKEN: 'fixture', TELEGRAM_CHAT_ID: '123', TELEGRAM_STATE_DIR: stateDir,
+                INBOX_STATE_DIR: path.join(dir, 'inbox'),
                 DB_BACKEND: 'fixture', DATABASE_URL: '', SUPABASE_URL: '', DOTENV_CONFIG_PATH: '/dev/null' } });
         const before = await healthy();
         process.kill(before.pid, 'SIGKILL');
         const after = await healthy(before.pid);
         assert.ok(after.pm2_env.restart_time >= 1);
         assert.equal(readStatus(path.join(stateDir, 'worker.sqlite')).deliveries.length, 0);
-        console.log(JSON.stringify({ supervisedRestart: 'passed', newPid: after.pid !== before.pid, heartbeat: 'healthy', liveSends: 0 }));
+        await call('stop', 'telegram-recovery-fixture');
+        assert.equal(JSON.parse(fs.readFileSync(healthFile)).data.status, 'stopped');
+        assert.equal(readStatus(path.join(stateDir, 'worker.sqlite')).heartbeat.status, 'stopped');
+        console.log(JSON.stringify({ supervisedRestart: 'passed', newPid: after.pid !== before.pid, heartbeat: 'healthy', gracefulStop: 'persisted', liveSends: 0 }));
     } finally {
         await call('killDaemon').catch(() => {});
         pm2.disconnect();

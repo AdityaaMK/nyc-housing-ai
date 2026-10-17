@@ -18,6 +18,7 @@ async function submitInquiry(listing, messageText) {
         console.log(`🎯 Known broker email in DB: ${listing.broker_email}. Sending direct email...`);
         const { subject, body } = parseSubjectAndBody(messageText, listing);
         await sendBrokerEmail({
+            listingId: listing.id,
             to: listing.broker_email,
             subject,
             body
@@ -50,6 +51,7 @@ async function submitInquiry(listing, messageText) {
                 console.log(`   🎯 Discovered direct agent email: ${agentContact.email}`);
                 const { subject, body } = parseSubjectAndBody(messageText, listing);
                 await sendBrokerEmail({
+                    listingId: listing.id,
                     to: agentContact.email,
                     subject,
                     body
@@ -132,6 +134,7 @@ async function submitInquiry(listing, messageText) {
                 console.log(`   🎯 Discovered direct agent email on StreetEasy: ${agentContact.email}`);
                 const { subject, body } = parseSubjectAndBody(messageText, listing);
                 await sendBrokerEmail({
+                    listingId: listing.id,
                     to: agentContact.email,
                     subject,
                     body

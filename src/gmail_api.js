@@ -56,11 +56,11 @@ function createGmailClient({ env = process.env, client = httpsClient, now = Date
     return {
         user: config.GMAIL_USER,
         verifyIdentity: async () => (await credentials()).profile,
-        async listUnread(since) {
+        async listMessages(since, unreadOnly = false) {
             const result = [], seen = new Set();
             let pageToken;
             do {
-                const query = new URLSearchParams({ q: `in:inbox is:unread after:${Math.floor(since.getTime() / 1000)}`, maxResults: '500' });
+                const query = new URLSearchParams({ q: `in:inbox ${unreadOnly ? 'is:unread ' : ''}after:${Math.floor(since.getTime() / 1000)}`, maxResults: '500' });
                 if (pageToken) query.set('pageToken', pageToken);
                 const page = await request('messages?' + query);
                 for (const message of page.messages || []) if (!seen.has(message.id)) { seen.add(message.id); result.push(message.id); }
@@ -68,13 +68,16 @@ function createGmailClient({ env = process.env, client = httpsClient, now = Date
             } while (pageToken);
             return result;
         },
+        async listUnread(since) { return this.listMessages(since, true); },
         async getMessage(id) {
             const message = await request('messages/' + encodeURIComponent(id) + '?format=raw');
             if (!message?.raw) throw new Error('Gmail message has no raw MIME content');
             const parsed = await require('mailparser').simpleParser(Buffer.from(message.raw, 'base64url'));
             return { id, subject: parsed.subject || 'No Subject', from: parsed.from?.text || 'Unknown Sender',
                 fromAddress: parsed.from?.value?.[0]?.address, body: parsed.text || parsed.html || '',
-                receivedAt: parsed.date?.toISOString() || new Date(Number(message.internalDate)).toISOString() };
+                threadId: message.threadId || null, rfcMessageId: parsed.messageId || null,
+                inReplyTo: parsed.inReplyTo || null, references: parsed.references || [],
+                receivedAt: Number(message.internalDate) > 0 ? new Date(Number(message.internalDate)).toISOString() : parsed.date?.toISOString() };
         },
         markRead: id => request('messages/' + encodeURIComponent(id) + '/modify', { method: 'POST', json: { removeLabelIds: ['UNREAD'] } }),
         async send(mailOptions) {
@@ -83,8 +86,9 @@ function createGmailClient({ env = process.env, client = httpsClient, now = Date
             await credentials();
             const composer = require('nodemailer').createTransport({ streamTransport: true, buffer: true });
             const composed = await composer.sendMail({ ...mailOptions, keepBcc: true });
-            const sent = await request('messages/send', { method: 'POST', json: { raw: composed.message.toString('base64url') } });
-            return { ...sent, messageId: sent.id };
+            const sent = await request('messages/send', { method: 'POST', json: { raw: composed.message.toString('base64url'),
+                ...(mailOptions.threadId ? { threadId: mailOptions.threadId } : {}) } });
+            return { ...sent, messageId: sent.id, providerMessageId: sent.id, rfcMessageId: composed.messageId };
         },
         close: async () => {}
     };

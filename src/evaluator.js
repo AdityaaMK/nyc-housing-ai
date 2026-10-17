@@ -1,6 +1,6 @@
 require('dotenv').config({ quiet: true });
 const { EvaluationError } = require('./evaluation_errors');
-const { preferenceSummary, locationArea, enforceLocation } = require('./preferences');
+const { loadPreferences, preferenceSummary, budgetSummary, budgetForListing, locationArea, enforceLocation } = require('./preferences');
 const { checkBuildingHealth } = require('./building_health');
 const { calculateRent } = require('./rent');
 
@@ -30,9 +30,9 @@ function providerDelay(response, body, now = Date.now()) {
     });
     return Math.max(300_000, ...[headerDelay, ...delays].filter(Number.isFinite));
 }
-async function runAIEvaluation(listing, description, { signal, fetchImpl = fetch } = {}) {
+async function runAIEvaluation(listing, description, { signal, fetchImpl = fetch, preferences = loadPreferences() } = {}) {
     assertCredentials();
-    const targetOffice = process.env.TARGET_COMMUTE_ADDRESS || "Datadog Office (620 8th Ave, NYT Building, NYC)";
+    const targetOffice = preferences.officeCommute.destination;
 
     const prompt = `
     You are an expert NYC Real Estate AI Assistant evaluating an apartment for a renter.
@@ -47,16 +47,16 @@ async function runAIEvaluation(listing, description, { signal, fetchImpl = fetch
     ${description}
     
     RENTER PREFERENCES & CRITERIA:
-    - Budget / Layout: 2B2B between $1,800 and $5,000 OR 1B/Studio between $1,800 and $2,700 (within the saved search areas below). Minimum rent is $1,800.
+    - Budget / Layout (saved preference revision ${preferences.revision}): ${budgetSummary(preferences)} (within the saved search areas below).
     - Budget means NET EFFECTIVE monthly rent averaged over the full initial lease: (gross monthly rent * (lease months - free months) - additional rent credit) / lease months. Free-month concessions are welcome, even if the gross monthly payment exceeds the budget. Do not penalize a legitimate concession or higher gross payment alone. Code will calculate the average from the extracted terms.
-    - SAVED SEARCH AREAS: ${preferenceSummary()}.
-    - WORKPLACE / COMMUTE TARGET: ${targetOffice} (Located at 8th Ave & 40th/41st St, direct access to Times Sq-42 St / Port Authority A/C/E/1/2/3/7/N/Q/R/W).
+    - SAVED SEARCH AREAS: ${preferenceSummary(preferences)}.
+    - WORKPLACE / COMMUTE TARGET: ${targetOffice}.
     
     Analyze the listing and output a JSON object with the following exact keys:
     - "location_area": (string) actual borough or municipality: Manhattan, Brooklyn, Queens, Jersey City, Hoboken, Bronx, Staten Island, or Unknown. Verify from the property location, not nearby places mentioned in the description.
     - "neighborhood": (string) NYC/NJ neighborhood (e.g., "Lower East Side", "East Village", "Financial District", "Hell's Kitchen", "Harlem", "Upper West Side", "Chelsea", etc.).
     - "is_preferred_neighborhood": (boolean) true only if the property matches the saved search areas above.
-    - "commute_minutes": (number) estimated door-to-door morning commute time in minutes to ${targetOffice} (including walking to nearest subway + train ride + walk to 620 8th Ave).
+    - "commute_minutes": (number) estimated door-to-door morning commute time in minutes to ${targetOffice} (including walking, waiting, transfers, and the walk to the office).
     - "commute_summary": (string) concise door-to-door transit route, e.g. "18 mins: 4 min walk to A/C/E @ 14th St -> 8 min ride to 42 St-Port Authority (direct exit into 620 8th Ave)".
     - "manhattan_commute_minutes": (number or null) SEPARATE estimate from this apartment to the first arrival station in Manhattan by public transit on a typical weekday morning. Include walking to the origin station, typical waiting, in-vehicle time, and transfers. Do not use only train time, the office commute, or a neighborhood-wide best case. Use null if the property location or route cannot be reasonably established, or the apartment is already in Manhattan.
     - "manhattan_arrival_station": (string or null) name of that arrival station, which must be in Manhattan. Null if unknown/not applicable.
@@ -69,8 +69,8 @@ async function runAIEvaluation(listing, description, { signal, fetchImpl = fetch
     - "pros": (array of strings) positive aspects: ultra-fast commute (<25 min to office), in-unit laundry, dishwasher, private balcony, elevator, doorman, near subway, no fee.
     - "suitability_score": (number 0-100) scoring guide:
         * Preferred neighborhood baseline: Within the saved search areas above = strong baseline (75-90) if layout & price are good.
-        * Commute adjustments to 620 8th Ave:
-            <= 20 min: +10 to +15 pts bonus (elite commute to Datadog office).
+        * Commute adjustments to the saved office destination:
+            <= 20 min: +10 to +15 pts bonus (excellent office commute).
             21-30 min: +5 to +10 pts bonus.
             31-40 min: neutral.
             > 40 min: -15 pts penalty.
@@ -97,7 +97,7 @@ async function runAIEvaluation(listing, description, { signal, fetchImpl = fetch
         return validateEvaluation(JSON.parse(text));
     } catch { throw new EvaluationError('invalid'); }
 }
-async function applyScoringRules(listing, result, { signal, healthCheck = checkBuildingHealth } = {}) {
+async function applyScoringRules(listing, result, { signal, healthCheck = checkBuildingHealth, preferences = loadPreferences() } = {}) {
     const evaluation = validateEvaluation(result);
     // Use calculated lease-average rent; use gross only when concession terms are incomplete.
     const rent = evaluation.effective_monthly_rent ?? evaluation.true_gross_rent;
@@ -105,22 +105,28 @@ async function applyScoringRules(listing, result, { signal, healthCheck = checkB
     if (evaluation.effective_monthly_rent === null) {
         evaluation.red_flags.push('Concession terms incomplete; budget check uses gross rent until the lease terms are confirmed.');
     }
-    const beds = parseFloat(listing.bedrooms || 0);
-    const baths = parseFloat(listing.bathrooms || 0);
+    const entry = budgetForListing(listing, preferences);
     const label = evaluation.effective_monthly_rent === null ? 'Gross rent' : 'Net effective rent';
-    if (rent < 1800) {
+    const baths = listing.bathrooms == null ? null : Number(listing.bathrooms);
+    if (!entry || baths === null || !Number.isFinite(baths) || baths < entry[1].minBathrooms) {
+        budgetCap = 40;
+        evaluation.red_flags.push('Bedroom/bathroom requirements are not met or the room counts are unknown');
+    }
+    if (entry && rent < entry[1].minRent) {
         budgetCap = 0;
-        evaluation.red_flags.push(`${label} ($${rent}) is below minimum threshold of $1,800 (likely room share, parking, or scam)`);
-    } else if (beds >= 2 && baths >= 2 && rent > 5000) {
-        budgetCap = 40;
-        evaluation.red_flags.push(`${label} ($${rent}) exceeds $5,000 budget for 2B2B`);
-    } else if (beds <= 1 && rent > 2700) {
-        budgetCap = 40;
-        evaluation.red_flags.push(`${label} ($${rent}) exceeds $2,700 budget for 1B/Studio`);
+        evaluation.red_flags.push(`${label} ($${rent}) is below minimum threshold of $${entry[1].minRent.toLocaleString('en-US')} (verify the unit and price)`);
+    } else if (entry && rent > entry[1].maxRent) {
+        budgetCap = Math.min(budgetCap, 40);
+        evaluation.red_flags.push(`${label} ($${rent}) exceeds $${entry[1].maxRent.toLocaleString('en-US')} budget for the selected apartment type`);
+    }
+    const officeLimit = preferences.officeCommute.maxMinutes;
+    if (officeLimit !== null && (!Number.isFinite(evaluation.commute_minutes) || evaluation.commute_minutes <= 0 || evaluation.commute_minutes > officeLimit)) {
+        budgetCap = Math.min(budgetCap, 74);
+        evaluation.red_flags.push(`Office commute exceeds ${officeLimit} minutes or is unknown`);
     }
 
     // Check Building Health via NYC Open Data (HPD & 311)
-    const health = await healthCheck(listing.title, locationArea(evaluation), { signal });
+    const health = await healthCheck(listing.title, locationArea(evaluation, preferences), { signal });
     if (health) {
         if (health.isHazardous) {
             evaluation.suitability_score = Math.max(0, evaluation.suitability_score - 20);
@@ -136,7 +142,8 @@ async function applyScoringRules(listing, result, { signal, healthCheck = checkB
 
     // Apply hard budget and location rules after all score bonuses.
     evaluation.suitability_score = Math.min(evaluation.suitability_score, budgetCap);
-    enforceLocation(evaluation);
+    enforceLocation(evaluation, preferences);
+    evaluation.preferences_revision = preferences.revision;
 
 
     signal?.throwIfAborted();

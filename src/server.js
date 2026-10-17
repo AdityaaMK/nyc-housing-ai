@@ -10,27 +10,46 @@ const { publicError } = require('./evaluation_errors');
 const { commuteMapsUrl } = require('./commute_links');
 const { confirmTourBooking, generateGoogleCalendarUrl } = require('./inbound_listener');
 
-const { loadPreferences, matchesLocation, locationArea } = require('./preferences');
+const { loadPreferences, matchesPreferences, locationArea } = require('./preferences');
+const { createOwnerAuth } = require('./owner_auth');
+const { getProductServices } = require('./product_services');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-installCommuteApi(app, { repository, service: createCommuteService({ allowance: createAllowance(pool) }) });
-
-app.get('/api/preferences', (req, res) => {
-    try { res.json(loadPreferences()); }
-    catch { res.status(500).json({ error: 'Failed to load saved preferences' }); }
+const owner = createOwnerAuth();
+const products = getProductServices();
+app.get('/api/owner/session', owner.session);
+// Existing actions can send mail, mutate user choices, or consume provider quota.
+app.post(['/api/listings/:id/status', '/api/tours/:id/confirm', '/api/listings/:id/commute'], owner.requireOwner);
+app.post('/api/listings/:id/commute', async (req, res, next) => {
+    try { await products.preferences.get(); next(); }
+    catch { res.status(503).json({ error: 'Search preferences are temporarily unavailable.' }); }
+});
+installCommuteApi(app, { repository, service: createCommuteService({ allowance: createAllowance(pool),
+    destination: () => loadPreferences().officeCommute.destination }) });
+require('./listing_insights_api').installListingInsightsApi(app, { service: products.insights, requireOwner: owner.requireOwner });
+require('./preferences_api').installPreferencesApi(app, { service: products.preferences, requireOwner: owner.requireOwner });
+require('./selection_api').installSelectionApi(app, { service: products.selection, requireOwner: owner.requireOwner });
+require('./conversations_api').installConversationsApi(app, { service: products.conversations, requireOwner: owner.requireOwner });
+require('./tour_planner_api').installTourPlannerApi(app, { service: products.tours, requireOwner: owner.requireOwner });
+require('./applications_api').installApplicationsApi(app, { service: products.applications, requireOwner: owner.requireOwner });
+app.get('/api/health', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try { res.json(await products.health.status()); }
+    catch { res.status(503).json({ error: 'Worker health is temporarily unavailable.' }); }
 });
 
 // Get all listings
 app.get('/api/listings', async (req, res) => {
     try {
         const result = await repository.listListings();
+        const enriched = await products.enrichListings(result.rows);
         const preferences = loadPreferences();
-        res.json(result.rows.map(row => {
-            const { evaluation_claim_token, evaluation_claim_expires_at, ...listing } = row;
+        res.json(enriched.map(row => {
+            const { evaluation_claim_token, evaluation_claim_expires_at, saved, ...listing } = row;
             return { ...listing, commute_address_available: Boolean(commuteOrigin(listing)), commute_maps_url: commuteMapsUrl(listing), evaluation_last_error: publicError(listing.evaluation_last_error),
-                location_area: locationArea(listing, preferences), is_preferred: matchesLocation(listing, preferences) };
+                location_area: locationArea(listing, preferences), is_preferred: matchesPreferences(listing, preferences) };
         }));
     } catch (err) {
         console.error(err);
@@ -58,7 +77,7 @@ app.post('/api/listings/:id/status', async (req, res) => {
 });
 
 // Get all tours from tour_schedules
-app.get('/api/tours', async (req, res) => {
+app.get('/api/tours', owner.requireOwner, async (req, res) => {
     try {
         const result = await repository.listTours();
         
@@ -88,7 +107,7 @@ app.get('/api/tours', async (req, res) => {
 app.post('/api/tours/:id/confirm', async (req, res) => {
     const { id } = req.params;
     try {
-        const result = await confirmTourBooking(id);
+        const result = await confirmTourBooking(id, { expectedRevision: req.body?.expectedRevision });
         res.status(result.success ? 200 : 400).json(result);
     } catch (err) {
         console.error(err);
@@ -157,10 +176,15 @@ app.use(express.static(require('node:path').resolve(__dirname, '../web/dist')));
 const PORT = process.env.PORT || 3001;
 
 if (require.main === module) {
-    initDB().then(() => {
+    initDB().then(async () => {
+        await products.store.verify();
         app.listen(PORT, () => {
             console.log(`🚀 Housing AI Web API running on http://localhost:${PORT}`);
         });
+    }).catch(async () => {
+        console.error('Housing API startup failed. Check database access and install the product feature migration.');
+        await pool.end().catch(() => {});
+        process.exitCode = 1;
     });
 }
 

@@ -1,0 +1,2 @@
+export const nyTime = value => value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }) : 'Not verified';
+export const money = value => value == null || value === '' || !Number.isFinite(Number(value)) ? 'Unknown' : Number(value).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });

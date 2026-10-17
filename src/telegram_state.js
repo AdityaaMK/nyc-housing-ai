@@ -20,6 +20,10 @@ function openState(filename, identity) {
                 attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL DEFAULT 0,
                 message_id INTEGER, error TEXT, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS listing_deliveries (listing_id TEXT PRIMARY KEY, delivery_id TEXT NOT NULL);`);
+        const columns = new Set(db.prepare('PRAGMA table_info(deliveries)').all().map(row => row.name));
+        for (const [name, type] of [['kind', "TEXT NOT NULL DEFAULT 'listing'"], ['payload', 'TEXT'], ['reference', 'TEXT']]) {
+            if (!columns.has(name)) db.exec(`ALTER TABLE deliveries ADD COLUMN ${name} ${type}`);
+        }
         const get = (key, fallback = null) => {
             const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
             return row ? JSON.parse(row.value) : fallback;
@@ -38,6 +42,13 @@ function openState(filename, identity) {
         db.prepare("UPDATE deliveries SET status='uncertain', error='interrupted_send' WHERE status='sending'").run();
         return {
             get, set,
+            enqueueEvents(events) { transaction(() => {
+                for (const event of events) {
+                    if (!['tour', 'nudge', 'price_change', 'tour_reminder', 'application_reminder'].includes(event.kind)) throw new Error('Unknown alert event');
+                    db.prepare(`INSERT OR IGNORE INTO deliveries (id,listing_ids,created_at,kind,payload,reference)
+                        VALUES (?,'[]',?,?,?,?)`).run('event:' + event.id, event.created_at, event.kind, JSON.stringify(event.payload), JSON.stringify(event.reference));
+                }
+            }); },
             enqueue(listings, now) {
                 transaction(() => {
                     const add = (id, ids) => {
@@ -55,12 +66,20 @@ function openState(filename, identity) {
                 });
             },
             ready: now => db.prepare("SELECT * FROM deliveries WHERE status IN ('pending','retry','sent') AND next_at <= ? ORDER BY created_at,id").all(now)
-                .map(row => ({ ...row, listing_ids: JSON.parse(row.listing_ids) })),
+                .map(row => ({ ...row, listing_ids: JSON.parse(row.listing_ids), payload: row.payload && JSON.parse(row.payload),
+                    reference: row.reference && JSON.parse(row.reference) })),
             preparing(id, ids) { db.prepare("UPDATE deliveries SET status='sending', listing_ids=?, attempts=attempts+1 WHERE id=?").run(JSON.stringify(ids), id); },
             sent(id, messageId) { db.prepare("UPDATE deliveries SET status='sent', message_id=?, error=NULL WHERE id=?").run(messageId, id); },
             finish(id, status = 'done') { db.prepare('UPDATE deliveries SET status=?, error=NULL WHERE id=?').run(status, id); },
             fail(id, status, error, nextAt = 0) { db.prepare('UPDATE deliveries SET status=?, error=?, next_at=? WHERE id=?').run(status, error, nextAt, id); },
             status() { return db.prepare('SELECT status, COUNT(*) AS count FROM deliveries GROUP BY status').all(); },
+            cancelledApplicationEvents() {
+                return db.prepare("SELECT id FROM deliveries WHERE kind='application_reminder' AND status='cancelled' AND message_id IS NULL").all().map(row => row.id);
+            },
+            rearmApplicationEvent(id) {
+                return db.prepare(`UPDATE deliveries SET status='pending', next_at=0, error=NULL
+                    WHERE id=? AND kind='application_reminder' AND status='cancelled' AND message_id IS NULL`).run(id).changes > 0;
+            },
             resolve(id, messageId) {
                 const result = db.prepare(`UPDATE deliveries SET status=?, message_id=?, next_at=0, error=NULL
                     WHERE id=? AND status IN ('uncertain','failed')`).run(messageId ? 'sent' : 'retry', messageId || null, id);

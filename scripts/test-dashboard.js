@@ -23,7 +23,7 @@ async function main() {
             const clear = window.clearInterval;
             window.clearInterval = id => { window.testIntervals.delete(id); clear(id); };
         });
-        let generation = 0, fail = false, hold = false, held, calls = 0;
+        let generation = 0, fail = false, hold = false, held, calls = 0, tourCalls = 0;
         const states = ['pending', 'processing', 'completed', 'retry_wait', 'failed'];
         const responses = () => ({
             '/api/listings': states.map((state, i) => ({ id: String(i), title: 'Fixture ' + state + ' ' + generation, status: 'inbox',
@@ -33,22 +33,28 @@ async function main() {
                 commute_maps_url: state === 'completed' ? require('../src/commute_links').commuteMapsUrl({ title: '975 Nostrand Avenue, Apt 346', location_area: 'Brooklyn' }) : null,
                 evaluation_last_error: state === 'failed' ? 'Evaluation temporarily unavailable.' : null,
                 evaluation_next_at: state === 'retry_wait' ? new Date().toISOString() : null })),
-            '/api/tours': [], '/api/preferences': { preferredNeighborhoods: [], includedAreas: [] },
+            '/api/tours': [], '/api/watchlist': { listings: [] }, '/api/commute/status': { available: false, code: 'unconfigured' }, '/api/preferences': { preferredNeighborhoods: [], includedAreas: [] },
             '/api/stats': { evaluation: Object.fromEntries(states.map(s => [s, 1])) }
         });
         await page.setRequestInterception(true);
         page.on('request', async req => {
             const path = new URL(req.url()).pathname;
             if (!path.startsWith('/api/')) return req.continue();
+            const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'Authorization,Content-Type', 'access-control-allow-methods': 'GET,POST,PUT,OPTIONS' };
+            if (req.method() === 'OPTIONS') return req.respond({ status: 204, headers });
+            const authenticated = req.headers().authorization === 'Bearer fixture-owner-token';
+            if (path === '/api/owner/session') return req.respond({ status: 200, contentType: 'application/json', headers, body: JSON.stringify({ configured: true, authenticated }) });
+            if (path === '/api/tours') { tourCalls++; if (!authenticated) return req.respond({ status: 401, contentType: 'application/json', headers, body: JSON.stringify({ error: 'Owner access required' }) }); }
             if (path === '/api/listings') calls++;
             const respond = () => req.respond({ status: fail && path === '/api/listings' ? 500 : 200,
-                contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+                contentType: 'application/json', headers,
                 body: JSON.stringify(fail && path === '/api/listings' ? { error: 'Fixture refresh failure' } : responses()[path]) });
             if (hold && path === '/api/listings') held = respond;
             else await respond();
         });
         await page.goto('http://127.0.0.1:' + server.httpServer.address().port);
         await page.waitForFunction(() => document.body.innerText.includes('Fixture completed 0'));
+        assert.equal(tourCalls, 0, 'Public pipeline never requests protected tours');
         const text = await page.$eval('body', el => el.innerText);
         for (const label of ['Pending', 'Processing', 'Scored', 'Retrying', 'Failed', 'AI commute estimate']) assert.ok(text.includes(label), label);
         assert.match(text, /Score\s*0/i);
@@ -75,6 +81,13 @@ async function main() {
         fail = false; generation++;
         await page.evaluate(() => { window.testHidden = false; document.dispatchEvent(new Event('visibilitychange')); });
         await page.waitForFunction(() => document.body.innerText.includes('Fixture completed 2'));
+        await page.type('[aria-label="Owner token"]', 'fixture-owner-token');
+        await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Unlock').click());
+        await page.waitForFunction(() => document.body.innerText.includes('Owner access unlocked'));
+        await delay(100); assert.equal(tourCalls, 1, 'Unlock refreshes protected tours');
+        await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Lock').click());
+        await page.waitForFunction(() => !document.body.innerText.includes('Owner access unlocked'));
+        await delay(100); await tick(); await delay(100); assert.equal(tourCalls, 1, 'Lock stops protected tour polling');
         assert.deepEqual(consoleErrors, []);
         console.log('Dashboard checks passed: all states, zero score, refresh, overlap prevention, failure retention, visibility.');
     } finally { await browser?.close(); await server.close(); }
