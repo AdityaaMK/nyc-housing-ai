@@ -4,6 +4,7 @@ import { requestApi, setOwnerToken } from './api';
 import { SettingsView } from './SettingsView';
 import { SelectionView, CostsEditor, ReviewsEditor } from './SelectionView';
 import { ToursWorkspace } from './ToursWorkspace';
+import { ApplicationsWorkspace, ApplicationEditor } from './ApplicationsWorkspace';
 import './product.css';
 
 import { ProductContext, useProduct } from './productState';
@@ -58,7 +59,7 @@ export function OwnerAccess() {
 }
 export function ProductNavigation({ activeTab, onSelect }) {
   return <nav aria-label="Search workspace" className="product-tabs mb-5">
-    {[['watchlist', 'Saved & compare'], ['decisions', 'Decisions'], ['conversations', 'Broker inbox'], ['settings', 'Search preferences'], ['health', 'Worker health']].map(([id, label]) => <button key={id} className="product-button" aria-selected={activeTab === id} onClick={() => onSelect(id)}>{label}</button>)}
+    {[['watchlist', 'Saved & compare'], ['decisions', 'Decisions'], ['applications', 'Applications'], ['conversations', 'Broker inbox'], ['settings', 'Search preferences'], ['health', 'Worker health']].map(([id, label]) => <button key={id} className="product-button" aria-selected={activeTab === id} onClick={() => onSelect(id)}>{label}</button>)}
   </nav>;
 }
 export function ProductPage({ activeTab, listings, onRefresh, onConfirm }) {
@@ -67,6 +68,7 @@ export function ProductPage({ activeTab, listings, onRefresh, onConfirm }) {
   if (activeTab === 'settings') return <OwnerRequired><SettingsView onSaved={onRefresh} /></OwnerRequired>;
   if (activeTab === 'watchlist' || activeTab === 'decisions') return <OwnerRequired><SelectionView decisionMode={activeTab === 'decisions'} listings={listings} /></OwnerRequired>;
   if (activeTab === 'conversations') return <OwnerRequired><ConversationView listings={listings} /></OwnerRequired>;
+  if (activeTab === 'applications') return <OwnerRequired><ApplicationsWorkspace listings={listings} /></OwnerRequired>;
   if (activeTab === 'tours') return <ToursWorkspace listings={listings} onConfirm={onConfirm} unlocked={unlocked} />;
   return null;
 }
@@ -99,8 +101,8 @@ function ListingDrawer() {
   }, [selected, setSelected]);
   if (!selected) return null;
   return <div className="product-overlay" onClick={event => { if (event.target === event.currentTarget) setSelected(null); }}><section role="dialog" aria-modal="true" aria-label={`Apartment details: ${selected.title}`} className="product-drawer">
-    <header className="product-drawer-header"><div className="product-row justify-between"><div><p className="product-muted">Apartment workspace</p><h2 className="text-xl font-extrabold">{selected.title}</h2></div><button ref={closeRef} className="product-button" onClick={() => setSelected(null)} aria-label="Close apartment details"><X size={18} /></button></div><nav className="product-tabs mt-4" aria-label="Apartment details tabs">{[['evidence','Freshness & price'],['costs','Costs'],['conversation','Conversation'],['review','Viewing & decision']].map(([id,label]) => <button key={id} aria-selected={tab === id} className="product-button" onClick={() => setTab(id)}>{label}</button>)}</nav></header>
-    <div className="p-4 md:p-6">{tab === 'evidence' && <EvidenceView listing={selected} />}{tab === 'costs' && <OwnerRequired><CostsEditor listing={selected} /></OwnerRequired>}{tab === 'conversation' && <OwnerRequired><ConversationView listing={selected} /></OwnerRequired>}{tab === 'review' && <OwnerRequired><ReviewsEditor listing={selected} /></OwnerRequired>}{!unlocked && <p className="product-muted mt-4">Close this panel and unlock owner access to edit your apartment research.</p>}</div>
+    <header className="product-drawer-header"><div className="product-row justify-between"><div><p className="product-muted">Apartment workspace</p><h2 className="text-xl font-extrabold">{selected.title}</h2></div><button ref={closeRef} className="product-button" onClick={() => setSelected(null)} aria-label="Close apartment details"><X size={18} /></button></div><nav className="product-tabs mt-4" aria-label="Apartment details tabs">{[['evidence','Freshness & price'],['costs','Costs'],['conversation','Conversation'],['review','Viewing & decision'],['application','Application']].map(([id,label]) => <button key={id} aria-selected={tab === id} className="product-button" onClick={() => setTab(id)}>{label}</button>)}</nav></header>
+    <div className="p-4 md:p-6">{tab === 'evidence' && <EvidenceView listing={selected} />}{tab === 'costs' && <OwnerRequired><CostsEditor listing={selected} /></OwnerRequired>}{tab === 'conversation' && <OwnerRequired><ConversationView listing={selected} /></OwnerRequired>}{tab === 'review' && <OwnerRequired><ReviewsEditor listing={selected} /></OwnerRequired>}{tab === 'application' && <OwnerRequired><ApplicationEditor key={selected.id} listing={selected} /></OwnerRequired>}{!unlocked && <p className="product-muted mt-4">Close this panel and unlock owner access to edit your apartment research.</p>}</div>
   </section></div>;
 }
 function EvidenceView({ listing }) {

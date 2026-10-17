@@ -33,6 +33,7 @@ require('./preferences_api').installPreferencesApi(app, { service: products.pref
 require('./selection_api').installSelectionApi(app, { service: products.selection, requireOwner: owner.requireOwner });
 require('./conversations_api').installConversationsApi(app, { service: products.conversations, requireOwner: owner.requireOwner });
 require('./tour_planner_api').installTourPlannerApi(app, { service: products.tours, requireOwner: owner.requireOwner });
+require('./applications_api').installApplicationsApi(app, { service: products.applications, requireOwner: owner.requireOwner });
 app.get('/api/health', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try { res.json(await products.health.status()); }

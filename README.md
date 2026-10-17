@@ -67,6 +67,12 @@ Set `HOUSING_OWNER_TOKEN` to a random secret of at least 24 characters, then unl
 
 SQLite installs the additive feature schema during startup. PostgreSQL/Supabase upgrades need migration `003_product_features.sql` after the existing scoring and commute migrations. See [feature setup, migration, behavior, and verification](docs/product-features.md). Installing this code does not start workers or send messages.
 
+## Application tracking
+
+The owner workspace now follows each apartment from preparation through submission, approval, and lease signing. It includes document readiness checklists, application/deposit/follow-up deadlines, offer comparisons, and an activity history linked to broker replies and decisions. These are records of your actions: saving a stage does not submit an application, send email, pay a deposit, or sign a lease. Document uploads remain deferred.
+
+Application data uses the same feature schema and owner access as the selection workspace. Run `npm run cloud:check:products` for a read-only check of the Supabase schemas, required table access, and owner configuration before rollout. See [application behavior, reminders, API, and rollout](docs/applications.md).
+
 ## Durable scoring worker
 
 Scoring runs independently from scraping, alerts, and outreach:

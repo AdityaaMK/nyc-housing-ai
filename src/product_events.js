@@ -7,11 +7,22 @@ function createProductEventBridge(services, now = Date.now) {
         async importInto(state) {
             await preferences.get();
             await tours.queueDueReminders();
-            const events = (await store.list('events')).filter(row => row.data.status === 'pending').slice(0, 100);
-            for (const row of events) {
+            await services.applicationReminders?.queueDueReminders();
+            const events = await store.list('events');
+            for (const row of events.filter(row => row.data.status === 'pending').slice(0, 100)) {
                 const event = row.data;
                 state.enqueueEvents([{ ...event, id: row.id, created_at: typeof event.created_at === 'number' ? event.created_at : Date.parse(event.created_at) || now() }]);
                 await store.put('events', row.id, { ...event, status: 'transferred', transferred_at: now() }, { expectedRevision: row.revision });
+            }
+            // Correcting a completion/stage can restore an unsent deadline. Reuse
+            // its durable identity; never reopen a delivery with any send receipt
+            // or an uncertain outcome, nor another kind of product notification.
+            const cancelled = new Set(state.cancelledApplicationEvents?.() || []);
+            if (cancelled.size && services.applicationReminders) {
+                for (const row of events) {
+                    if (row.data.kind === 'application_reminder' && cancelled.has('event:' + row.id) &&
+                        await services.applicationReminders.isReminderCurrent(row.data.reference)) state.rearmApplicationEvent('event:' + row.id);
+                }
             }
         },
         enrichListings: rows => services.enrichListings(rows),
@@ -22,6 +33,9 @@ function createProductEventBridge(services, now = Date.now) {
             return !current.revision || Date.parse(original?.proposed_datetime) === Date.parse(current.startsAt);
         },
         async prepare(delivery) {
+            if (delivery.kind === 'application_reminder') {
+                return services.applicationReminders ? services.applicationReminders.prepare(delivery.reference) : { status: 'wait' };
+            }
             if (delivery.kind === 'tour_reminder') {
                 if (!await tours.isReminderCurrent(delivery.reference)) return { status: 'cancel' };
                 const tour = await tours.getSchedule(delivery.reference.tourId);

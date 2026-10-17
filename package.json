@@ -21,6 +21,7 @@
     "scrape:worker": "node src/scrape_worker.js",
     "gmail:authorize": "node scripts/gmail-authorize.js",
     "cloud:check": "node scripts/cloud-check.js",
+    "cloud:check:products": "node scripts/check-product-rollout.js",
     "db:migrate:https": "node scripts/migrate-https.js",
     "db:migrate:features": "node scripts/migrate-product.js",
     "startup:install": "node scripts/macos/install.cjs",

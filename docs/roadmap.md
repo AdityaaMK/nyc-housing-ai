@@ -1,5 +1,7 @@
 # Development Roadmap
 
+The next application workflow is also implemented: document readiness, application stages, deadline reminders, owner-entered offer comparison, and activity linked to broker replies and decisions. See [application tracking](applications.md). Secure document storage remains deferred.
+
 The original phases below record the earlier feature roadmap. All [ten feature implementations](#next-ten-feature-implementations) are now implemented in the API, workers, and dashboard. See [setup, behavior, and verification](product-features.md). Deployment and Telegram activation are separate from implementation.
 
 ### Phase 1: Ingestion & Multi-Source Listing Monitor

@@ -9,6 +9,8 @@ const { createConversationService } = require('./conversations');
 const { createTourPlanner } = require('./tour_planner');
 const { createTourRouteService } = require('./tour_routes');
 const { createHealthService } = require('./health_service');
+const { createApplicationService } = require('./applications');
+const { createApplicationReminders } = require('./application_reminders');
 const { assessPreferences } = require('./preferences');
 
 function createProductServices({ store = featureStore, repo = repository, db = pool, now = Date.now, routeService, localHealth = true } = {}) {
@@ -21,6 +23,8 @@ function createProductServices({ store = featureStore, repo = repository, db = p
     const tours = createTourPlanner({ store, repository: repo, now,
         routeService: routeService || createTourRouteService({ store, allowance: createAllowance(db), now }) });
     const health = createHealthService({ store, repository: repo, now, local: localHealth });
+    const applications = createApplicationService({ store, repository: repo, now });
+    const applicationReminders = createApplicationReminders({ store, applications, repository: repo, now });
     async function enrichListings(rows) {
         const [prefs, sources, metadata, watchlist] = await Promise.all([preferences.get(), store.list('listing_sources'), store.list('listing_insights'), store.list('watchlist')]);
         const byListing = new Map(), meta = new Map(metadata.map(row => [row.id, row.data])), watched = new Map(watchlist.map(row => [row.id, row.data]));
@@ -39,7 +43,7 @@ function createProductServices({ store = featureStore, repo = repository, db = p
                 saved: watched.get(row.id)?.saved === true };
         });
     }
-    return { store, repository: repo, preferences, insights, selection, conversations, tours, health, enrichListings };
+    return { store, repository: repo, preferences, insights, selection, conversations, tours, health, applications, applicationReminders, enrichListings };
 }
 let shared;
 const getProductServices = () => shared ||= createProductServices();

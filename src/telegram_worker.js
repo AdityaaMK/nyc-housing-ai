@@ -42,8 +42,8 @@ async function notificationCycle({ state, repository, api, chatId, signal, now =
             payload = delivery.id === 'backlog' ? buildBacklogAlert(listings) : buildListingAlert({ ...listings[0], is_preferred: true });
             ids = listings.map(l => l.id);
         } else {
-            const prepared = ['price_change', 'tour_reminder'].includes(delivery.kind) ? await productBridge?.prepare(delivery) : null;
-            const eligibility = prepared?.status || (['price_change', 'tour_reminder'].includes(delivery.kind) ? 'wait' :
+            const prepared = ['price_change', 'tour_reminder', 'application_reminder'].includes(delivery.kind) ? await productBridge?.prepare(delivery) : null;
+            const eligibility = prepared?.status || (['price_change', 'tour_reminder', 'application_reminder'].includes(delivery.kind) ? 'wait' :
                 await eventEligibility(delivery, repository, inboxBridge, now(), productBridge));
             if (eligibility === 'wait') continue;
             if (eligibility === 'cancel') { state.finish(delivery.id, 'cancelled'); continue; }
